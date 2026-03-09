@@ -1,4 +1,4 @@
-“Using the attached minimal Android template, create a new app that does X.
+“Using the attached midiPlayer Android template, create a new app that does X.
 You may:
 
     Rename the app ID and app name
@@ -30,11 +30,11 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MinimalApp"
+rootProject.name = "midiPlayer"
 include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml -----
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.minimal"
+    package="com.example.midiPlayer"
     android:versionCode="1"
     android:versionName="1.0" >
 
@@ -43,10 +43,10 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:targetSdkVersion="34" />
 
     <permission
-        android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
         android:allowBackup="true"
@@ -60,11 +60,11 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:testOnly="true"
-        android:theme="@style/Theme.MinimalApp" >
+        android:theme="@style/Theme.midiPlayer" >
         <activity
-            android:name="com.example.minimal.MainActivity"
+            android:name="com.example.midiPlayer.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MinimalApp" >
+            android:theme="@style/Theme.midiPlayer" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -74,7 +74,7 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.example.minimal.androidx-startup"
+            android:authorities="com.example.midiPlayer.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.emoji2.text.EmojiCompatInitializer"
@@ -111,7 +111,7 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
 </manifest>----- FILE ./app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml -----
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.minimal"
+    package="com.example.midiPlayer"
     android:versionCode="1"
     android:versionName="1.0" >
 
@@ -120,10 +120,10 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:targetSdkVersion="34" />
 
     <permission
-        android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
         android:allowBackup="true"
@@ -137,11 +137,11 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:testOnly="true"
-        android:theme="@style/Theme.MinimalApp" >
+        android:theme="@style/Theme.midiPlayer" >
         <activity
-            android:name="com.example.minimal.MainActivity"
+            android:name="com.example.midiPlayer.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MinimalApp" >
+            android:theme="@style/Theme.midiPlayer" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -151,7 +151,7 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.example.minimal.androidx-startup"
+            android:authorities="com.example.midiPlayer.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.emoji2.text.EmojiCompatInitializer"
@@ -188,7 +188,7 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
 </manifest>----- FILE ./app/build/intermediates/packaged_manifests/debug/processDebugManifestForPackage/AndroidManifest.xml -----
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.minimal"
+    package="com.example.midiPlayer"
     android:versionCode="1"
     android:versionName="1.0" >
 
@@ -197,10 +197,10 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:targetSdkVersion="34" />
 
     <permission
-        android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.example.minimal.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="com.example.midiPlayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
         android:allowBackup="true"
@@ -214,11 +214,11 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:testOnly="true"
-        android:theme="@style/Theme.MinimalApp" >
+        android:theme="@style/Theme.midiPlayer" >
         <activity
-            android:name="com.example.minimal.MainActivity"
+            android:name="com.example.midiPlayer.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MinimalApp" >
+            android:theme="@style/Theme.midiPlayer" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -228,7 +228,7 @@ include(":app")----- FILE ./app/build/intermediates/merged_manifest/debug/proces
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.example.minimal.androidx-startup"
+            android:authorities="com.example.midiPlayer.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.emoji2.text.EmojiCompatInitializer"
@@ -269,11 +269,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.minimal"
+    namespace = "com.example.midiPlayer"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.minimal"
+        applicationId = "com.example.midiPlayer"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -309,11 +309,11 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 
-    // Optional but very common / recommended in 2025 minimal apps
+    // Optional but very common / recommended in 2025 midiPlayer apps
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.fragment:fragment-ktx:1.8.4") // even if not using fragments
-}----- FILE ./app/src/test/java/com/example/minimal/ExampleUnitTest.kt -----
-package com.example.minimal
+}----- FILE ./app/src/test/java/com/example/midiPlayer/ExampleUnitTest.kt -----
+package com.example.midiPlayer
 
 import org.junit.Test
 
@@ -342,13 +342,13 @@ class ExampleUnitTest {
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MinimalApp"
+        android:theme="@style/Theme.midiPlayer"
         tools:targetApi="31">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MinimalApp">
+            android:theme="@style/Theme.midiPlayer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -360,13 +360,13 @@ class ExampleUnitTest {
 </manifest>----- FILE ./app/src/main/res/values-night/themes.xml -----
 <resources xmlns:tools="http://schemas.android.com/tools">
 
-    <style name="Theme.MinimalApp" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="Theme.midiPlayer" parent="Theme.Material3.DayNight.NoActionBar" />
 
 </resources>----- FILE ./app/src/main/res/values/themes.xml -----
 <resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Base application theme -->
-    <style name="Theme.MinimalApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.midiPlayer" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Optional: override some Material 3 colors if desired -->
         <!--
         <item name="colorPrimary">@color/md_theme_light_primary</item>
@@ -384,8 +384,8 @@ class ExampleUnitTest {
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-</resources>----- FILE ./app/src/main/java/com/example/minimal/MainActivity.kt -----
-package com.example.minimal
+</resources>----- FILE ./app/src/main/java/com/example/midiPlayer/MainActivity.kt -----
+package com.example.midiPlayer
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -406,7 +406,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val text = MaterialTextView(this).apply {
-            text = "Hello, minimal Material 3 world!"
+            text = "Hello, midiPlayer Material 3 world!"
             textSize = 24f
             id = android.R.id.text1
 
@@ -424,8 +424,8 @@ class MainActivity : AppCompatActivity() {
         root.addView(text)
         setContentView(root)
     }
-}----- FILE ./app/src/androidTest/java/com/example/minimal/ExampleInstrumentedTest.kt -----
-package com.example.minimal
+}----- FILE ./app/src/androidTest/java/com/example/midiPlayer/ExampleInstrumentedTest.kt -----
+package com.example.midiPlayer
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -446,7 +446,7 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.example.minimalapp", appContext.packageName)
+        assertEquals("com.example.midiPlayerapp", appContext.packageName)
     }
 }----- FILE ./build.gradle.kts -----
 plugins {

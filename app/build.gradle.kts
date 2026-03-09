@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.minimal"
+    namespace = "com.example.midiPlayer"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.minimal"
+        applicationId = "com.example.midiPlayer"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -44,7 +44,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 
-    // Optional but very common / recommended in 2025 minimal apps
+    // Optional but very common / recommended in 2025 midiPlayer apps
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.fragment:fragment-ktx:1.8.4") // even if not using fragments
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 }

@@ -1,7 +1,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Base application theme -->
-    <style name="Theme.MinimalApp" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.midiPlayer" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Optional: override some Material 3 colors if desired -->
         <!--
         <item name="colorPrimary">@color/md_theme_light_primary</item>
