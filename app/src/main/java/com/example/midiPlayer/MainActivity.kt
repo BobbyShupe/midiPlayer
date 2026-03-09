@@ -2,6 +2,8 @@ package com.example.midiPlayer
 
 import android.content.Context
 import android.graphics.Canvas
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.widget.SeekBar
@@ -34,6 +36,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams as CLParams
+import android.util.Log
 
 class MainActivity : AppCompatActivity() {
 
@@ -124,13 +127,11 @@ class MainActivity : AppCompatActivity() {
             id = View.generateViewId()
             max = 100
             progress = 100
-            //setBackgroundColor(0x33FFFFFF.toInt())
             thumbTintList = ColorStateList.valueOf(0xFF44FF44.toInt())
             progressTintList = ColorStateList.valueOf(0xFFAAAAAA.toInt())
             progressBackgroundTintList = ColorStateList.valueOf(0xFF444444.toInt())
 
             layoutParams = CLParams(120, 0).apply {
-
                 topToBottom = spinnerPlaylists.id
                 bottomToTop = btnContainer.id
                 endToEnd = CLParams.PARENT_ID
@@ -145,7 +146,6 @@ class MainActivity : AppCompatActivity() {
                 val volume = progress / 100f
                 mediaPlayer?.setVolume(volume, volume)
             }
-
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
@@ -159,15 +159,14 @@ class MainActivity : AppCompatActivity() {
                 topToBottom = spinnerPlaylists.id
                 bottomToTop = btnContainer.id
                 startToStart = CLParams.PARENT_ID
-                endToStart = volumeSlider.id       // key: list stops before the slider
+                endToStart = volumeSlider.id
                 topMargin = 16
                 bottomMargin = 16
-                marginEnd = 16                     // small gap to slider
+                marginEnd = 16
             }
         }
 
-        // ── Buttons ──────────────────────────────────────────────────────────────
-
+        // Buttons (keeping your original styling)
         val btnAddFiles = MaterialButton(this).apply {
             id = View.generateViewId()
             text = "Add Files"
@@ -209,7 +208,6 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            // same style as btnAddFiles...
             backgroundTintList = btnAddFiles.backgroundTintList
             setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
@@ -235,7 +233,6 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            // same style
             backgroundTintList = btnAddFiles.backgroundTintList
             setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
@@ -391,13 +388,6 @@ class MainActivity : AppCompatActivity() {
         root.addView(rvPlaylist)
         root.addView(btnContainer)
 
-        volumeSlider.post {
-            println("VolumeSlider bounds: left=${volumeSlider.left}, right=${volumeSlider.right}, " +
-                    "top=${volumeSlider.top}, bottom=${volumeSlider.bottom}, " +
-                    "width=${volumeSlider.width}, height=${volumeSlider.height}, " +
-                    "visibility=${volumeSlider.visibility}")
-        }
-
         setContentView(root)
 
         // Spinner setup
@@ -423,7 +413,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
@@ -449,64 +438,87 @@ class MainActivity : AppCompatActivity() {
     private fun playAt(position: Int) {
         if (position < 0 || position >= currentPlaylist.size) return
 
+        // Clean up previous player
         mediaPlayer?.release()
         mediaPlayer = null
         currentPfd?.close()
         currentPfd = null
-        currentPosition = position
 
         val uri = currentPlaylist[position]
 
         try {
+            val pfd = contentResolver.openFileDescriptor(uri, "r")
+                ?: throw IOException("Cannot open ParcelFileDescriptor")
+
+            currentPfd = pfd
+
             mediaPlayer = MediaPlayer().apply {
-                val pfd = contentResolver.openFileDescriptor(uri, "r")
-                    ?: throw java.io.FileNotFoundException("Cannot open ParcelFileDescriptor for $uri")
-
-                currentPfd = pfd
-
                 setDataSource(pfd.fileDescriptor)
 
-                setOnPreparedListener { start() }
                 setOnCompletionListener { mp ->
-                    // We are now in "playback finished" state
-                    // Do NOT release here — let playAt() handle cleanup
-
-                    if (currentPosition < currentPlaylist.size - 1) {
-                        // Advance immediately (safe because old player is already done)
-                        playAt(currentPosition + 1)
-                    } else {
-                        // End of playlist
-                        releasePlayer()           // safe now — no more auto-advance
-                        statusText.text = "Finished playlist"
-                        this@MainActivity.currentPosition = -1
-                        playlistAdapter.notifyDataSetChanged()
-                    }
+                    Log.w("MidiPlayer", "onCompletion triggered (fallback) at position $position")
+                    handleTrackCompletion()
                 }
+
                 setOnErrorListener { mp, what, extra ->
-                    statusText.text = "Playback error: $what / $extra\n${getDisplayName(uri)}"
+                    Log.e("MidiPlayer", "MediaPlayer error: what=$what extra=$extra")
+                    statusText.text = "Error: $what / $extra"
                     releasePlayer()
-                    this@MainActivity.currentPosition = -1
-                    playlistAdapter.notifyDataSetChanged()
                     true
                 }
-                prepareAsync()
+
+                // Synchronous prepare (recommended for debugging MIDI issues)
+                prepare()
+                this@MainActivity.currentPosition = position
+                start()
+                playlistAdapter.notifyDataSetChanged()
+                statusText.text = "Playing: ${getDisplayName(uri)}"
+
+                // Polling to detect end of track (main workaround for broken onCompletion)
+                val handler = Handler(Looper.getMainLooper())
+                val checkRunnable = object : Runnable {
+                    override fun run() {
+                        mediaPlayer?.let { mp ->
+                            if (mp.isPlaying) {
+                                val pos = mp.currentPosition
+                                val dur = mp.duration
+                                if (dur > 1000 && pos >= dur - 800) {  // within ~800ms of end
+                                    Log.d("MidiPlayer", "Polling detected near end → advancing (pos=$pos, dur=$dur)")
+                                    handleTrackCompletion()
+                                    return  // stop checking
+                                }
+                                handler.postDelayed(this, 600)  // check every 0.6 seconds
+                            }
+                        }
+                    }
+                }
+                handler.postDelayed(checkRunnable, 1500)  // start polling after 1.5s
             }
 
-            statusText.text = "Loading: ${getDisplayName(uri)}"
-            playlistAdapter.notifyDataSetChanged()
-
-        } catch (e: java.io.FileNotFoundException) {
-            statusText.text = "Access denied or file not found:\n${getDisplayName(uri)}"
+        } catch (e: Exception) {
+            Log.e("MidiPlayer", "Failed to play track at $position", e)
+            statusText.text = "Error: ${e.message}"
             currentPosition = -1
             playlistAdapter.notifyDataSetChanged()
-        } catch (e: Exception) {
-            statusText.text = "Failed to load:\n${e.javaClass.simpleName}: ${e.localizedMessage}"
+        }
+    }
+
+    private fun handleTrackCompletion() {
+        val next = currentPosition + 1
+        if (next < currentPlaylist.size) {
+            Log.i("MidiPlayer", "Advancing to track $next")
+            playAt(next)
+        } else {
+            Log.i("MidiPlayer", "End of playlist reached")
+            releasePlayer()
+            statusText.text = "Finished playlist"
             currentPosition = -1
             playlistAdapter.notifyDataSetChanged()
         }
     }
 
     private fun releasePlayer() {
+        Log.d("MidiPlayer", "Releasing player resources")
         mediaPlayer?.release()
         mediaPlayer = null
         currentPfd?.close()
@@ -587,9 +599,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     contentResolver.openFileDescriptor(uri, "r")?.close()
                     validUris.add(uri)
-                } catch (_: Exception) {
-                    // permission lost or file gone
-                }
+                } catch (_: Exception) {}
             }
             playlists[name] = validUris
         }
@@ -666,10 +676,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Custom Vertical SeekBar (no rotation needed)
-// ──────────────────────────────────────────────────────────────────────────────
-
+// VerticalSeekBar remains unchanged
 class VerticalSeekBar @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -677,20 +684,16 @@ class VerticalSeekBar @JvmOverloads constructor(
 ) : AppCompatSeekBar(context, attrs, defStyleAttr) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        // We swap dimensions for the super class because the SeekBar
-        // internal logic expects width to be the long axis.
         super.onSizeChanged(h, w, oldh, oldw)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        // Ensure we respect the width set in LayoutParams
         setMeasuredDimension(measuredWidth, measuredHeight)
     }
 
     override fun onDraw(canvas: Canvas) {
         canvas.rotate(-90f)
-        // Translate the canvas to bring the "horizontal" bar into the vertical view area
         canvas.translate(-height.toFloat(), 0f)
         super.onDraw(canvas)
     }
@@ -702,13 +705,9 @@ class VerticalSeekBar @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN,
             MotionEvent.ACTION_MOVE,
             MotionEvent.ACTION_UP -> {
-                // Calculation: (Total Max) * (Distance from bottom / Total Height)
                 val progressValue = (max * (height - event.y) / height).toInt()
                 progress = progressValue.coerceIn(0, max)
-
-                // Redraw and notify listeners
                 onSizeChanged(width, height, 0, 0)
-
                 if (event.action != MotionEvent.ACTION_UP) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                 }
