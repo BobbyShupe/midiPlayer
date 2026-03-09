@@ -467,11 +467,16 @@ class MainActivity : AppCompatActivity() {
                 setDataSource(pfd.fileDescriptor)
 
                 setOnPreparedListener { start() }
-                setOnCompletionListener {
-                    releasePlayer()
+                setOnCompletionListener { mp ->
+                    // We are now in "playback finished" state
+                    // Do NOT release here — let playAt() handle cleanup
+
                     if (currentPosition < currentPlaylist.size - 1) {
+                        // Advance immediately (safe because old player is already done)
                         playAt(currentPosition + 1)
                     } else {
+                        // End of playlist
+                        releasePlayer()           // safe now — no more auto-advance
                         statusText.text = "Finished playlist"
                         this@MainActivity.currentPosition = -1
                         playlistAdapter.notifyDataSetChanged()
