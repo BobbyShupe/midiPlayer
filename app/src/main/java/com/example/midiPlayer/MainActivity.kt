@@ -1,52 +1,54 @@
 package com.example.midiPlayer
 
+
 import android.content.Context
 import android.graphics.Canvas
-import android.os.Handler
-import android.os.Looper
-import android.util.AttributeSet
-import android.view.MotionEvent
-import android.widget.SeekBar
-import android.os.ParcelFileDescriptor
-import java.io.IOException
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.media.MediaPlayer
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.util.AttributeSet
+import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
+import android.widget.SeekBar
 import android.widget.Spinner
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatSeekBar
-import androidx.core.content.ContextCompat
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams as CLParams
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams as CLParams
-import android.util.Log
+import java.io.IOException
+import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
-    private var mediaPlayer: MediaPlayer? = null
     private val playlists = mutableMapOf<String, MutableList<Uri>>()
     private var currentPlaylistName: String = "Default"
     private val currentPlaylist: MutableList<Uri>
         get() = playlists.getOrPut(currentPlaylistName) { mutableListOf() }
 
     private var currentPosition = -1
+    private var isAdlInitialized = false
 
     private lateinit var volumeSlider: VerticalSeekBar
     private lateinit var statusText: MaterialTextView
@@ -54,17 +56,44 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playlistAdapter: PlaylistAdapter
     private lateinit var spinnerPlaylists: Spinner
 
-    private var currentPfd: ParcelFileDescriptor? = null
+    // Audio playback
+    private var audioTrack: AudioTrack? = null
+    private var playbackThread: Thread? = null
+    private val audioBufferSize = 2048 // stereo frames
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var positionCheckRunnable: Runnable? = null
+
+    // Native JNI methods
+    private external fun initAdlMidi(sampleRate: Int = 44100): Boolean
+    private external fun loadMidiData(data: ByteArray): Boolean
+    private external fun generateSamples(buffer: ShortArray, sampleCount: Int): Int
+    private external fun playAdl()
+    private external fun pauseAdl()
+    private external fun stopAdl()
+    private external fun setAdlVolume(vol: Float)
+    private external fun setIsActive(active: Boolean)
+    private external fun isAdlPlaying(): Boolean
+    private external fun getAdlPositionMs(): Int
+    private external fun getAdlDurationMs(): Int
+    private external fun releaseAdl()
+
+    companion object {
+        init {
+            System.loadLibrary("midiplayer")
+        }
+    }
 
     private val pickMultipleMidi = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris: List<Uri>? ->
+    ) { uris ->
         uris?.let {
-            val contentResolver = contentResolver
             val validUris = it.mapNotNull { uri ->
                 try {
-                    val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    contentResolver.takePersistableUriPermission(uri, takeFlags)
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
                     uri
                 } catch (_: Exception) {
                     null
@@ -126,7 +155,7 @@ class MainActivity : AppCompatActivity() {
         volumeSlider = VerticalSeekBar(this).apply {
             id = View.generateViewId()
             max = 100
-            progress = 100
+            progress = 80
             thumbTintList = ColorStateList.valueOf(0xFF44FF44.toInt())
             progressTintList = ColorStateList.valueOf(0xFFAAAAAA.toInt())
             progressBackgroundTintList = ColorStateList.valueOf(0xFF444444.toInt())
@@ -143,8 +172,8 @@ class MainActivity : AppCompatActivity() {
 
         volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val volume = progress / 100f
-                mediaPlayer?.setVolume(volume, volume)
+                val vol = progress / 100f
+                setAdlVolume(vol)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -166,7 +195,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Buttons (keeping your original styling)
+        // Buttons (same as before)
         val btnAddFiles = MaterialButton(this).apply {
             id = View.generateViewId()
             text = "Add Files"
@@ -195,7 +224,6 @@ class MainActivity : AppCompatActivity() {
                 startToStart = CLParams.PARENT_ID
                 marginStart = 2
                 topMargin = 2
-                horizontalChainStyle = CLParams.CHAIN_SPREAD_INSIDE
             }
             setOnClickListener {
                 pickMultipleMidi.launch(arrayOf("audio/midi", "audio/mid", "audio/x-midi"))
@@ -275,9 +303,9 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = 2
             }
             setOnClickListener {
-                if (mediaPlayer?.isPlaying == true) return@setOnClickListener
                 if (currentPosition >= 0) {
-                    mediaPlayer?.start()
+                    playAdl()
+                    startAudioPlaybackIfNeeded()
                     playlistAdapter.notifyDataSetChanged()
                 } else if (currentPlaylist.isNotEmpty()) {
                     playAt(0)
@@ -308,7 +336,8 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = 2
             }
             setOnClickListener {
-                mediaPlayer?.pause()
+                pauseAdl()
+                pauseAudioPlayback()
                 playlistAdapter.notifyDataSetChanged()
             }
         }
@@ -336,8 +365,7 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = 2
             }
             setOnClickListener {
-                mediaPlayer?.stop()
-                mediaPlayer?.reset()
+                stopPlaybackCompletely()
                 currentPosition = -1
                 playlistAdapter.notifyDataSetChanged()
                 statusText.text = "Stopped"
@@ -405,6 +433,7 @@ class MainActivity : AppCompatActivity() {
                 if (pos in playlists.keys.indices) {
                     currentPlaylistName = playlists.keys.elementAt(pos)
                     playlistAdapter.notifyDataSetChanged()
+                    stopPlaybackCompletely()
                     currentPosition = -1
                     statusText.text = if (currentPlaylist.isEmpty()) {
                         "Playlist \"$currentPlaylistName\" is empty"
@@ -418,6 +447,12 @@ class MainActivity : AppCompatActivity() {
 
         playlistAdapter = PlaylistAdapter { pos -> playAt(pos) }
         rvPlaylist.adapter = playlistAdapter
+
+        // Init libADLMIDI
+        isAdlInitialized = initAdlMidi(44100)
+        if (!isAdlInitialized) {
+            statusText.text = "Failed to initialize libADLMIDI"
+        }
 
         loadPlaylists()
         updateSpinner()
@@ -436,95 +471,260 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playAt(position: Int) {
-        if (position < 0 || position >= currentPlaylist.size) return
+        if (position < 0 || position >= currentPlaylist.size || !isAdlInitialized) return
 
-        // Clean up previous player
-        mediaPlayer?.release()
-        mediaPlayer = null
-        currentPfd?.close()
-        currentPfd = null
+        Log.d("MidiPlayer", "Preparing to play position $position")
+
+        stopPlaybackCompletely()
+        releaseAdl()
+
+        isAdlInitialized = initAdlMidi(44100)
+        if (!isAdlInitialized) {
+            statusText.text = "Failed to re-init OPL"
+            return
+        }
 
         val uri = currentPlaylist[position]
 
         try {
-            val pfd = contentResolver.openFileDescriptor(uri, "r")
-                ?: throw IOException("Cannot open ParcelFileDescriptor")
+            Log.d("MidiPlayer", "Loading MIDI: ${getDisplayName(uri)}")
 
-            currentPfd = pfd
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IOException("Cannot read file")
+            if (bytes.isEmpty()) throw IOException("Empty MIDI file")
 
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(pfd.fileDescriptor)
-
-                setOnCompletionListener { mp ->
-                    Log.w("MidiPlayer", "onCompletion triggered (fallback) at position $position")
-                    handleTrackCompletion()
-                }
-
-                setOnErrorListener { mp, what, extra ->
-                    Log.e("MidiPlayer", "MediaPlayer error: what=$what extra=$extra")
-                    statusText.text = "Error: $what / $extra"
-                    releasePlayer()
-                    true
-                }
-
-                // Synchronous prepare (recommended for debugging MIDI issues)
-                prepare()
-                this@MainActivity.currentPosition = position
-                start()
-                playlistAdapter.notifyDataSetChanged()
-                statusText.text = "Playing: ${getDisplayName(uri)}"
-
-                // Polling to detect end of track (main workaround for broken onCompletion)
-                val handler = Handler(Looper.getMainLooper())
-                val checkRunnable = object : Runnable {
-                    override fun run() {
-                        mediaPlayer?.let { mp ->
-                            if (mp.isPlaying) {
-                                val pos = mp.currentPosition
-                                val dur = mp.duration
-                                if (dur > 1000 && pos >= dur - 800) {  // within ~800ms of end
-                                    Log.d("MidiPlayer", "Polling detected near end → advancing (pos=$pos, dur=$dur)")
-                                    handleTrackCompletion()
-                                    return  // stop checking
-                                }
-                                handler.postDelayed(this, 600)  // check every 0.6 seconds
-                            }
-                        }
-                    }
-                }
-                handler.postDelayed(checkRunnable, 1500)  // start polling after 1.5s
+            val success = loadMidiData(bytes)
+            Log.e("MidiPlayer", "loadMidiData returned: $success")
+            if (!success) {
+                Log.e("MidiPlayer", "MIDI load failed - aborting play")
+                statusText.text = "Load failed"
+                return
             }
 
+            currentPosition = position
+            playlistAdapter.notifyDataSetChanged()
+            statusText.text = "Playing: ${getDisplayName(uri)}"
+
+            // CRUCIAL: make sure synth is active and volume up
+            setIsActive(true)
+            setAdlVolume(1.0f)
+
+            playAdl()
+
+            // Optional: log whether native side thinks it’s playing
+            Log.d("MidiPlayer", "isAdlPlaying() after playAdl = ${isAdlPlaying()}")
+
+            startAudioPlaybackIfNeeded()
+
         } catch (e: Exception) {
-            Log.e("MidiPlayer", "Failed to play track at $position", e)
+            Log.e("MidiPlayer", "Play failed", e)
             statusText.text = "Error: ${e.message}"
             currentPosition = -1
             playlistAdapter.notifyDataSetChanged()
         }
     }
 
+
+    private fun startAudioPlaybackIfNeeded() {
+        // If already playing, don’t start another thread
+        val track = audioTrack
+        if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) return
+
+        val sampleRate = 44100
+        val framesPerChunk = audioBufferSize           // 2048 frames
+        val samplesPerChunk = framesPerChunk * 2       // stereo (L+R)
+        val bytesPerSample = 2                         // 16‑bit
+
+        // Compute a safe buffer size for the AudioTrack
+        val minBufferBytes = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_STEREO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        val trackBufferBytes = (samplesPerChunk * bytesPerSample).coerceAtLeast(minBufferBytes)
+
+        // Build AudioTrack
+        audioTrack = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                    .build()
+            )
+            .setBufferSizeInBytes(trackBufferBytes)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
+            Log.e("MidiPlayer", "AudioTrack not initialized, state=${audioTrack?.state}")
+            audioTrack?.release()
+            audioTrack = null
+            return
+        }
+
+        audioTrack?.play()
+        Log.d(
+            "MidiPlayer",
+            "AudioTrack started, state=${audioTrack?.state}, playState=${audioTrack?.playState}, bufBytes=$trackBufferBytes"
+        )
+
+        // Start audio thread
+        playbackThread = thread(name = "OPL Audio Thread", isDaemon = true) {
+            val buffer = ShortArray(samplesPerChunk)
+
+            Log.d("MidiPlayer", "Audio thread started")
+
+            try {
+                while (!Thread.interrupted() &&
+                    audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING
+                ) {
+                    // Ask native synth for framesPerChunk frames (stereo)
+                    val generatedFrames = generateSamples(buffer, framesPerChunk)
+
+                    if (generatedFrames > 0) {
+                        val samplesToWrite = generatedFrames * 2 // stereo
+                        // Optional debug of sample content:
+                        val s0 = buffer[0]
+                        val s1 = buffer[1]
+                        val s2 = buffer[2]
+                        Log.d(
+                            "MidiPlayer",
+                            "gen=$generatedFrames, samples[0..2]=[$s0,$s1,$s2]"
+                        )
+
+
+                        val written = audioTrack?.write(
+                            buffer,
+                            0,
+                            samplesToWrite
+                        ) ?: -1
+
+                        if (written <= 0) {
+                            Log.e(
+                                "MidiPlayer",
+                                "AudioTrack.write failed, written=$written"
+                            )
+                            break
+                        }
+                    } else {
+                        // No new audio, avoid busy‑loop
+                        Log.d("MidiPlayer", "generateSamples returned 0, sleeping")
+                        Thread.sleep(5)
+                    }
+                }
+            } catch (e: InterruptedException) {
+                // Normal on stop
+                Log.d("MidiPlayer", "Audio thread interrupted")
+            } catch (e: Exception) {
+                Log.e("MidiPlayer", "Audio thread error", e)
+            } finally {
+                Log.d("MidiPlayer", "Audio thread exiting, final playState=${audioTrack?.playState}")
+                try {
+                    audioTrack?.stop()
+                } catch (_: IllegalStateException) { }
+                audioTrack?.release()
+                audioTrack = null
+            }
+        }
+
+        // Keep your existing position polling
+        startPositionPolling()
+    }
+
+
+    private fun pauseAudioPlayback() {
+        audioTrack?.pause()
+    }
+
+    private fun stopPlaybackCompletely() {
+        Log.d("MidiPlayer", "Stopping playback completely...")
+
+        // 1. Disable generation immediately
+        setIsActive(false)
+
+        // 2. Stop AudioTrack
+        audioTrack?.stop()
+        audioTrack?.flush()
+        audioTrack?.release()
+        audioTrack = null
+
+        // 3. Interrupt and **force wait** for thread
+        playbackThread?.let { thread ->
+            thread.interrupt()
+            var attempts = 0
+            while (thread.isAlive && attempts < 15) {  // ~1500 ms max
+                try {
+                    thread.join(100)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                attempts++
+            }
+            if (thread.isAlive) {
+                Log.w("MidiPlayer", "Audio thread refused to die after ~1500 ms")
+            } else {
+                Log.d("MidiPlayer", "Audio thread fully stopped")
+            }
+        }
+        playbackThread = null
+
+        // 4. Now safe to reset/close
+        stopAdl()
+        stopPositionPolling()
+
+        Log.d("MidiPlayer", "Playback fully stopped - ready for new song")
+    }
+
+    private fun startPositionPolling() {
+        positionCheckRunnable?.let { handler.removeCallbacks(it) }
+
+        positionCheckRunnable = object : Runnable {
+            override fun run() {
+                if (!isAdlPlaying()) {
+                    stopPositionPolling()
+                    return
+                }
+
+                val posMs = getAdlPositionMs()
+                val durMs = getAdlDurationMs()
+
+                if (durMs > 1000 && posMs >= durMs - 800) {
+                    handler.post { handleTrackCompletion() }
+                    return
+                }
+
+                handler.postDelayed(this, 600)
+            }
+        }
+
+        handler.postDelayed(positionCheckRunnable!!, 1500)
+    }
+
+    private fun stopPositionPolling() {
+        positionCheckRunnable?.let { handler.removeCallbacks(it) }
+        positionCheckRunnable = null
+    }
+
     private fun handleTrackCompletion() {
         val next = currentPosition + 1
         if (next < currentPlaylist.size) {
-            Log.i("MidiPlayer", "Advancing to track $next")
             playAt(next)
         } else {
-            Log.i("MidiPlayer", "End of playlist reached")
-            releasePlayer()
+            stopPlaybackCompletely()
             statusText.text = "Finished playlist"
             currentPosition = -1
             playlistAdapter.notifyDataSetChanged()
         }
     }
 
-    private fun releasePlayer() {
-        Log.d("MidiPlayer", "Releasing player resources")
-        mediaPlayer?.release()
-        mediaPlayer = null
-        currentPfd?.close()
-        currentPfd = null
-        currentPosition = -1
-    }
+    // Playlist / UI logic (unchanged from your previous working version)
 
     private fun showCreatePlaylistDialog() {
         val input = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT }
@@ -610,15 +810,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        stopPlaybackCompletely()
+        releaseAdl()
         super.onDestroy()
-        releasePlayer()
     }
 
     inner class PlaylistAdapter(
         private val onClick: (Int) -> Unit
     ) : RecyclerView.Adapter<PlaylistAdapter.ViewHolder>() {
-
-        private val items: List<Uri> get() = currentPlaylist
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val tvName: MaterialTextView = view.findViewById(R.id.tv_file_name)
@@ -631,11 +830,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val uri = items[position]
+            val uri = currentPlaylist[position]
             holder.tvName.text = getDisplayName(uri)
 
             if (position == currentPosition) {
-                holder.tvStatus.text = if (mediaPlayer?.isPlaying == true) "Playing" else "Paused"
+                holder.tvStatus.text = if (isAdlPlaying()) "Playing" else "Paused"
                 holder.tvStatus.visibility = View.VISIBLE
                 holder.itemView.setBackgroundColor(0x220000FF)
             } else {
@@ -651,7 +850,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        override fun getItemCount() = items.size
+        override fun getItemCount() = currentPlaylist.size
     }
 
     private fun showRemoveTrackDialog(position: Int) {
@@ -661,8 +860,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Remove") { _, _ ->
                 currentPlaylist.removeAt(position)
                 if (currentPosition == position) {
-                    mediaPlayer?.stop()
-                    mediaPlayer?.reset()
+                    stopPlaybackCompletely()
                     currentPosition = -1
                 } else if (currentPosition > position) {
                     currentPosition--
@@ -676,7 +874,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// VerticalSeekBar remains unchanged
+// Vertical SeekBar (unchanged)
 class VerticalSeekBar @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,

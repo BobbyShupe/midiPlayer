@@ -1,3 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">midiPlayer</string>
+
+    <!-- Already suggested earlier – make sure these are present too -->
+    <string name="app_name">MidiPlayer</string>
+    <string name="no_files_loaded">No files loaded</string>
+    <string name="open">Open</string>
+    <string name="playpause">Play / Pause</string>
+    <string name="restart">Restart</string>
+    <string name="htremolo">Deep tremolo</string>
+    <string name="hvibrato">Deep vibrato</string>
+    <string name="scalemod">Scalable modulation</string>
+    <string name="run_at_pcm_rate">Run at PCM rate</string>
+    <string name="full_panning_stereo">Full panning stereo</string>
+    <string name="autoArpeggio">Auto arpeggio</string>
+    <string name="emulatorType">Emulator type</string>
+    <string name="volumesModel">Volumes model</string>
+    <string name="chanAllocationMode">Channel allocation mode</string>
+    <string name="bankNo">Bank number</string>
+    <string name="chooseBank">Choose bank</string>
+    <string name="useCustom">Use custom bank</string>
+
+    <!-- The newly reported missing ones – add these now -->
+    <string name="vrmAuto">Auto</string>           <!-- placeholder; change to whatever you want -->
+    <string name="numChips">Number of chips</string>
+    <string name="num4opChans">Number of 4-op channels</string>
+    <string name="gain_factor">Gain factor</string>
+
+    <string name="sign_minus">-</string>
+    <string name="sign_minusminus">--</string>
+    <string name="sign_plus">+</string>
+    <string name="sign_plusplus">++</string>
+
+    <string name="bank_file_empty">No custom bank loaded</string>
+    <string name="quit">Quit</string>
+    <string name="noCustomBankLabel">No custom bank loaded</string>
+
 </resources>
