@@ -1,5 +1,9 @@
 package com.example.midiPlayer
 
+import android.content.Context
+import android.graphics.Canvas
+import android.util.AttributeSet
+import android.view.MotionEvent
 import android.widget.SeekBar
 import android.os.ParcelFileDescriptor
 import java.io.IOException
@@ -20,6 +24,7 @@ import android.widget.EditText
 import android.widget.Spinner
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -40,14 +45,13 @@ class MainActivity : AppCompatActivity() {
 
     private var currentPosition = -1
 
-    private lateinit var volumeSlider: SeekBar
+    private lateinit var volumeSlider: VerticalSeekBar
     private lateinit var statusText: MaterialTextView
     private lateinit var rvPlaylist: RecyclerView
     private lateinit var playlistAdapter: PlaylistAdapter
     private lateinit var spinnerPlaylists: Spinner
 
     private var currentPfd: ParcelFileDescriptor? = null
-
 
     private val pickMultipleMidi = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -105,37 +109,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-
-        volumeSlider = SeekBar(this).apply {
-            id = View.generateViewId()
-            max = 100
-            progress = 100
-            rotation = -90f
-        }
-
-        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val volume = progress / 100f
-                mediaPlayer?.setVolume(volume, volume)
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-
-        volumeSlider.layoutParams = CLParams(
-            500,80
-        ).apply {
-            endToEnd = CLParams.PARENT_ID
-            topToTop = CLParams.PARENT_ID
-            bottomToBottom = CLParams.PARENT_ID
-            marginEnd = 8
-        }
-
-
-
         val btnContainer = ConstraintLayout(this).apply {
             id = View.generateViewId()
             layoutParams = CLParams(CLParams.MATCH_PARENT, CLParams.WRAP_CONTENT).apply {
@@ -144,25 +117,56 @@ class MainActivity : AppCompatActivity() {
                 endToEnd = CLParams.PARENT_ID
                 bottomMargin = 24
             }
-            setPadding(0,16,0,16)
+            setPadding(0, 16, 0, 16)
         }
 
-        rvPlaylist = RecyclerView(this).apply {
+        volumeSlider = VerticalSeekBar(this).apply {
             id = View.generateViewId()
-            layoutManager = LinearLayoutManager(this@MainActivity)
-            layoutParams = CLParams(CLParams.MATCH_PARENT, 0).apply {
-                topToBottom = volumeSlider.id
-                volumeSlider.thumbTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
-                volumeSlider.progressTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            max = 100
+            progress = 100
+            //setBackgroundColor(0x33FFFFFF.toInt())
+            thumbTintList = ColorStateList.valueOf(0xFF44FF44.toInt())
+            progressTintList = ColorStateList.valueOf(0xFFAAAAAA.toInt())
+            progressBackgroundTintList = ColorStateList.valueOf(0xFF444444.toInt())
+
+            layoutParams = CLParams(120, 0).apply {
+
+                topToBottom = spinnerPlaylists.id
                 bottomToTop = btnContainer.id
-                startToStart = CLParams.PARENT_ID
                 endToEnd = CLParams.PARENT_ID
+                marginEnd = 30
                 topMargin = 16
                 bottomMargin = 16
             }
         }
 
-        // ── Larger, more readable buttons ───────────────────────────────────
+        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val volume = progress / 100f
+                mediaPlayer?.setVolume(volume, volume)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        rvPlaylist = RecyclerView(this).apply {
+            id = View.generateViewId()
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            layoutParams = CLParams(0, 0).apply {
+                width = CLParams.MATCH_CONSTRAINT
+                height = CLParams.MATCH_CONSTRAINT
+                topToBottom = spinnerPlaylists.id
+                bottomToTop = btnContainer.id
+                startToStart = CLParams.PARENT_ID
+                endToStart = volumeSlider.id       // key: list stops before the slider
+                topMargin = 16
+                bottomMargin = 16
+                marginEnd = 16                     // small gap to slider
+            }
+        }
+
+        // ── Buttons ──────────────────────────────────────────────────────────────
 
         val btnAddFiles = MaterialButton(this).apply {
             id = View.generateViewId()
@@ -170,31 +174,16 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-
             backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
+                arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()),
+                intArrayOf(0xFFFFFFFF.toInt(), 0xFF000000.toInt())
             )
-
             setTextColor(
                 ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
+                    arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()),
+                    intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt())
                 )
             )
-
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -220,29 +209,9 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            // same style as btnAddFiles...
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -266,29 +235,9 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            // same style
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -312,29 +261,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -366,29 +294,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -415,29 +322,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -467,29 +353,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = ColorStateList(
-                arrayOf(
-                    intArrayOf(android.R.attr.state_pressed),
-                    intArrayOf()
-                ),
-                intArrayOf(
-                    0xFFFFFFFF.toInt(),  // color when finger is touching
-                    0xFF000000.toInt()   // normal color
-                )
-            )
-
-            setTextColor(
-                ColorStateList(
-                    arrayOf(
-                        intArrayOf(android.R.attr.state_pressed),
-                        intArrayOf()
-                    ),
-                    intArrayOf(
-                        0xFF000000.toInt(), // pressed text
-                        0xFFFFFFFF.toInt()  // normal text
-                    )
-                )
-            )
+            backgroundTintList = btnAddFiles.backgroundTintList
+            setTextColor(btnAddFiles.textColors)
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -526,6 +391,13 @@ class MainActivity : AppCompatActivity() {
         root.addView(rvPlaylist)
         root.addView(btnContainer)
 
+        volumeSlider.post {
+            println("VolumeSlider bounds: left=${volumeSlider.left}, right=${volumeSlider.right}, " +
+                    "top=${volumeSlider.top}, bottom=${volumeSlider.bottom}, " +
+                    "width=${volumeSlider.width}, height=${volumeSlider.height}, " +
+                    "visibility=${volumeSlider.visibility}")
+        }
+
         setContentView(root)
 
         // Spinner setup
@@ -551,6 +423,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
@@ -559,7 +432,6 @@ class MainActivity : AppCompatActivity() {
 
         loadPlaylists()
         updateSpinner()
-
     }
 
     private fun getDisplayName(uri: Uri): String {
@@ -577,7 +449,6 @@ class MainActivity : AppCompatActivity() {
     private fun playAt(position: Int) {
         if (position < 0 || position >= currentPlaylist.size) return
 
-        // Clean up previous player + FD
         mediaPlayer?.release()
         mediaPlayer = null
         currentPfd?.close()
@@ -591,13 +462,13 @@ class MainActivity : AppCompatActivity() {
                 val pfd = contentResolver.openFileDescriptor(uri, "r")
                     ?: throw java.io.FileNotFoundException("Cannot open ParcelFileDescriptor for $uri")
 
-                currentPfd = pfd  // <-- Keep it alive!
+                currentPfd = pfd
 
                 setDataSource(pfd.fileDescriptor)
 
                 setOnPreparedListener { start() }
                 setOnCompletionListener {
-                    releasePlayer()  // will close pfd
+                    releasePlayer()
                     if (currentPosition < currentPlaylist.size - 1) {
                         playAt(currentPosition + 1)
                     } else {
@@ -706,19 +577,15 @@ class MainActivity : AppCompatActivity() {
         val saved = data["playlists"] as? Map<String, List<String>> ?: return
         saved.forEach { (name, uriStrings) ->
             val validUris = mutableListOf<Uri>()
-
             uriStrings.forEach { uriString ->
                 val uri = Uri.parse(uriString)
                 try {
                     contentResolver.openFileDescriptor(uri, "r")?.close()
                     validUris.add(uri)
-                } catch (_: SecurityException) {
-                    // permission lost
                 } catch (_: Exception) {
-                    // file gone
+                    // permission lost or file gone
                 }
             }
-
             playlists[name] = validUris
         }
         currentPlaylistName = (data["current"] as? String) ?: "Default"
@@ -791,5 +658,60 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Custom Vertical SeekBar (no rotation needed)
+// ──────────────────────────────────────────────────────────────────────────────
+
+class VerticalSeekBar @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = android.R.attr.seekBarStyle
+) : AppCompatSeekBar(context, attrs, defStyleAttr) {
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        // We swap dimensions for the super class because the SeekBar
+        // internal logic expects width to be the long axis.
+        super.onSizeChanged(h, w, oldh, oldw)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        // Ensure we respect the width set in LayoutParams
+        setMeasuredDimension(measuredWidth, measuredHeight)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.rotate(-90f)
+        // Translate the canvas to bring the "horizontal" bar into the vertical view area
+        canvas.translate(-height.toFloat(), 0f)
+        super.onDraw(canvas)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isEnabled) return false
+
+        when (event.action) {
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_UP -> {
+                // Calculation: (Total Max) * (Distance from bottom / Total Height)
+                val progressValue = (max * (height - event.y) / height).toInt()
+                progress = progressValue.coerceIn(0, max)
+
+                // Redraw and notify listeners
+                onSizeChanged(width, height, 0, 0)
+
+                if (event.action != MotionEvent.ACTION_UP) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+        }
+        return true
     }
 }
