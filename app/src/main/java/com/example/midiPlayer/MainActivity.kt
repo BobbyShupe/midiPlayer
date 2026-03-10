@@ -7,6 +7,8 @@ import android.os.Process
 import android.content.Context
 import android.graphics.Canvas
 import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.media.AudioAttributes
@@ -45,6 +47,7 @@ import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
+    private var audioService: AudioPlaybackService? = null
     private val playlists = mutableMapOf<String, MutableList<Uri>>()
     private var currentPlaylistName: String = "Default"
     private val currentPlaylist: MutableList<Uri>
@@ -60,15 +63,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerPlaylists: Spinner
 
     // Audio playback
-    private var audioTrack: AudioTrack? = null
-    private var playbackThread: Thread? = null
+
     val audioBufferSize = AudioTrack.getMinBufferSize(
-        8000,
+        48000,
         AudioFormat.CHANNEL_OUT_STEREO,
         AudioFormat.ENCODING_PCM_16BIT
     ) * 4
     val bufferSize = AudioTrack.getMinBufferSize(
-        8000,
+        48000,
         AudioFormat.CHANNEL_OUT_STEREO,
         AudioFormat.ENCODING_PCM_16BIT
     ) * 4
@@ -77,7 +79,7 @@ class MainActivity : AppCompatActivity() {
     private var positionCheckRunnable: Runnable? = null
 
     // Native JNI methods
-    private external fun initAdlMidi(sampleRate: Int = 8000): Boolean
+    private external fun initAdlMidi(sampleRate: Int = 48000): Boolean
     private external fun loadMidiData(data: ByteArray): Boolean
     private external fun generateSamples(buffer: ShortArray, sampleCount: Int): Int
     private external fun playAdl()
@@ -123,6 +125,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val channel = NotificationChannel(
+            "midi",
+            "MIDI Playback",
+            NotificationManager.IMPORTANCE_LOW
+        )
+
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
 
         val root = ConstraintLayout(this).apply {
             layoutParams = CLParams(CLParams.MATCH_PARENT, CLParams.MATCH_PARENT)
@@ -186,6 +197,7 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val vol = progress / 100f
                 setAdlVolume(vol)
+                audioService?.setVolume(vol)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -463,7 +475,7 @@ class MainActivity : AppCompatActivity() {
         rvPlaylist.adapter = playlistAdapter
 
         // Init libADLMIDI
-        isAdlInitialized = initAdlMidi(8000)
+        isAdlInitialized = initAdlMidi(48000)
         if (!isAdlInitialized) {
             statusText.text = "Failed to initialize libADLMIDI"
         }
@@ -493,7 +505,7 @@ class MainActivity : AppCompatActivity() {
         stopPlayback()
         releaseAdl()
 
-        isAdlInitialized = initAdlMidi(8000)
+        isAdlInitialized = initAdlMidi(48000)
         if (!isAdlInitialized) {
             statusText.text = "Failed to re-init OPL"
             return
@@ -515,14 +527,16 @@ class MainActivity : AppCompatActivity() {
                 statusText.text = "Load failed"
                 return
             }
-
+            startService(Intent(this, AudioPlaybackService::class.java))
             currentPosition = position
             playlistAdapter.notifyDataSetChanged()
             statusText.text = "Playing: ${getDisplayName(uri)}"
 
             // CRUCIAL: make sure synth is active and volume up
             setIsActive(true)
-            setAdlVolume(1.0f)
+            val currentVol = volumeSlider.progress / 100f
+            setAdlVolume(currentVol)
+            audioService?.setVolume(currentVol)
 
             playAdl()
 
@@ -538,124 +552,55 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun startAudioPlaybackIfNeeded() {
-        // If already playing, don’t start another thread
-        val track = audioTrack
-        if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) return
+    // Inside MainActivity class
+    private var isBound = false
 
-        val sampleRate = 8000
-        val framesPerChunk = 8192         // 65536 frames
-        val samplesPerChunk = framesPerChunk * 2       // stereo (L+R)
-        val bytesPerSample = 2                         // 16‑bit
+    private val connection = object : android.content.ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+            val binder = service as AudioPlaybackService.AudioBinder
+            audioService = binder.getService()
+            isBound = true
 
-        // Compute a safe buffer size for the AudioTrack
-        val minBufferBytes = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_STEREO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        val trackBufferBytes = maxOf(
-            minBufferBytes,
-            samplesPerChunk * bytesPerSample * 8
-        )
-        // Build AudioTrack
-        audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setFlags(AudioAttributes.FLAG_LOW_LATENCY)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
-                    .build()
-            )
-            .setBufferSizeInBytes(trackBufferBytes)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            .build()
-
-        if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
-            Log.e("MidiPlayer", "AudioTrack not initialized, state=${audioTrack?.state}")
-            audioTrack?.release()
-            audioTrack = null
-            return
+            // If a song was selected while we were binding, start it now
+            if (currentPosition != -1) {
+                resumeOrStartAudio()
+            }
         }
 
-        audioTrack?.play()
-        Log.d(
-            "MidiPlayer",
-            "AudioTrack started, state=${audioTrack?.state}, playState=${audioTrack?.playState}, bufBytes=$trackBufferBytes"
-        )
+        override fun onServiceDisconnected(name: android.content.ComponentName?) {
+            audioService = null
+            isBound = false
+        }
+    }
 
-        // Start audio thread
-        playbackThread = Thread({
-            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-            android.os.Process.setThreadPriority(-19)
+    private fun startAudioPlaybackIfNeeded() {
+        val intent = Intent(this, AudioPlaybackService::class.java)
+        // startForegroundService is required for background starts on API 26+
+        startForegroundService(intent)
+        bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
 
-            val buffer = ShortArray(samplesPerChunk)
-
-            Log.d("MidiPlayer", "Audio thread started")
-
-
-            while (!Thread.currentThread().isInterrupted &&
-                audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING
-            ) {
-                // Ask native synth for framesPerChunk frames (stereo)
-                val generatedFrames = generateSamples(buffer, framesPerChunk)
-
-                if (generatedFrames > 0) {
-                    val samples = generatedFrames * 2 // stereo
-
-                    audioTrack?.write(
-                        buffer,
-                        0,
-                        samples,
-                        AudioTrack.WRITE_BLOCKING
-                    )
-                } else {
-                    Thread.sleep(1)
-                }
-            }
-
-        }, "OPL-Audio")
-
-        playbackThread!!.priority = Thread.MAX_PRIORITY
-        playbackThread!!.start()
-
-
-
-
-        // Keep your existing position polling
+    private fun resumeOrStartAudio() {
+        // Pass the JNI generateSamples method as a callback to the service
+        audioService?.startPlayback(48000, 2048) { buffer, count ->
+            generateSamples(buffer, count)
+        }
         startPositionPolling()
     }
 
-
     private fun pauseAudioPlayback() {
-        audioTrack?.pause()
+        audioService?.pausePlayback()
+        stopPositionPolling()
     }
 
-    fun stopPlayback() {
-        Log.d("MidiPlayer", "Stopping playback")
-
-        playbackThread?.interrupt()
-
-        try {
-            playbackThread?.join()
-        } catch (_: InterruptedException) {}
-
-        playbackThread = null
-
-        audioTrack?.stop()
-        audioTrack?.flush()
-        audioTrack?.release()
-        audioTrack = null
-
-        Log.d("MidiPlayer", "Playback stopped")
+    private fun stopPlayback() {
+        stopPositionPolling()
+        audioService?.stopPlayback()
+        if (isBound) {
+            unbindService(connection)
+            isBound = false
+        }
+        stopService(Intent(this, AudioPlaybackService::class.java))
     }
 
     private fun startPositionPolling() {
