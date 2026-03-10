@@ -151,27 +151,23 @@ Java_com_example_midiPlayer_MainActivity_generateSamples(
         return 0;
     }
 
-    // Use the MIDI sequencer API, not real‑time
     int samplesGenerated = adl_play(g_player, samplesRequested, out);
-
-    env->ReleaseShortArrayElements(buffer, out, 0);
-    g_isGenerating = false;
-
-    LOGD("adl_play(%d samples) → %d samples",
-         samplesRequested, samplesGenerated);
-
-    int framesGenerated = samplesGenerated / channels;
 
     if (samplesGenerated > 0) {
         float vol = g_volume.load(std::memory_order_relaxed);
-        int samples = samplesGenerated;
-        for (int i = 0; i < samples; ++i) {
+
+        for (int i = 0; i < samplesGenerated; ++i) {
             int v = static_cast<int>(out[i] * vol);
             if (v > 32767) v = 32767;
             if (v < -32768) v = -32768;
             out[i] = static_cast<short>(v);
         }
     }
+
+    env->ReleaseShortArrayElements(buffer, out, 0);
+    g_isGenerating = false;
+
+    int framesGenerated = samplesGenerated / channels;
 
 
     return framesGenerated;
@@ -226,7 +222,7 @@ Java_com_example_midiPlayer_MainActivity_setAdlVolume(
         JNIEnv*, jobject, jfloat vol
 ) {
     if (vol < 0.0f) vol = 0.0f;
-    if (vol > 2.0f) vol = 2.0f; // allow a bit of boost if you like
+    if (vol > 4.0f) vol = 4.0f; // allow a bit of boost if you like
     g_volume.store(vol, std::memory_order_relaxed);
     LOGD("Volume set to %.2f", vol);
 }

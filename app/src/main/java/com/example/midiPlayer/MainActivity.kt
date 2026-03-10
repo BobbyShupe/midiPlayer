@@ -195,9 +195,9 @@ class MainActivity : AppCompatActivity() {
 
         volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val vol = progress / 100f
+                val vol = progress / 25f   //
                 setAdlVolume(vol)
-                audioService?.setVolume(vol)
+                Log.d("MidiPlayer", "Slider volume set to $vol (native gain applied)")
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -556,12 +556,15 @@ class MainActivity : AppCompatActivity() {
     private var isBound = false
 
     private val connection = object : android.content.ServiceConnection {
-        override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+        override fun onServiceConnected(name: android.content.ComponentName?, service: IBinder?) {
             val binder = service as AudioPlaybackService.AudioBinder
             audioService = binder.getService()
             isBound = true
 
-            // If a song was selected while we were binding, start it now
+            // Sync the restored volume to the service immediately upon connection
+            val currentVol = volumeSlider.progress / 100f
+            audioService?.setVolume(currentVol)
+
             if (currentPosition != -1) {
                 resumeOrStartAudio()
             }
@@ -700,7 +703,8 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("midi_player", MODE_PRIVATE)
         val data = mapOf(
             "playlists" to playlists.mapValues { (_, uris) -> uris.map { it.toString() } },
-            "current" to currentPlaylistName
+            "current" to currentPlaylistName,
+            "volume" to volumeSlider.progress // This saves the current slider position
         )
         prefs.edit().putString("data", Gson().toJson(data)).apply()
     }
@@ -728,6 +732,21 @@ class MainActivity : AppCompatActivity() {
         if (!playlists.containsKey(currentPlaylistName)) {
             currentPlaylistName = playlists.keys.firstOrNull() ?: "Default"
         }
+
+        // --- FIX FOR VOLUME PERSISTENCE ---
+        // 1. Extract volume (Gson numbers are usually Double)
+        val savedVol = (data["volume"] as? Double)?.toInt() ?: 80
+
+        // 2. Update the UI slider
+        volumeSlider.progress = savedVol
+
+        // 3. Define volFloat and apply to native synth
+        val volFloat = savedVol / 100f
+        setAdlVolume(volFloat)
+
+        // 4. Apply to service if it's already bound
+        // (Note: Ensure you have the audioService variable and connection logic implemented)
+        // audioService?.setVolume(volFloat)
     }
 
     override fun onDestroy() {
