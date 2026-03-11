@@ -90,12 +90,9 @@ class AudioPlaybackService : Service() {
                     val frames = generate(buffer, framesPerChunk)
                     if (frames > 0) {
                         audioTrack?.write(buffer, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
-                    }
-                } else {
-                    try {
-                        Thread.sleep(10)
-                    } catch (e: InterruptedException) {
-                        break
+                    } else {
+                        // Give the CPU a break if we are transitioning songs
+                        Thread.sleep(5)
                     }
                 }
             }

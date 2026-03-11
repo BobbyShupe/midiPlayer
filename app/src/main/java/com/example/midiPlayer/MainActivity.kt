@@ -195,7 +195,7 @@ class MainActivity : AppCompatActivity() {
 
         volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val vol = progress / 25f   //
+                val vol = progress / 12.5f   //
                 setAdlVolume(vol)
                 Log.d("MidiPlayer", "Slider volume set to $vol (native gain applied)")
             }
@@ -498,57 +498,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playAt(position: Int) {
-        if (position < 0 || position >= currentPlaylist.size || !isAdlInitialized) return
-
-        Log.d("MidiPlayer", "Preparing to play position $position")
-
-        stopPlayback()
-        releaseAdl()
-
-        isAdlInitialized = initAdlMidi(48000)
-        if (!isAdlInitialized) {
-            statusText.text = "Failed to re-init OPL"
-            return
-        }
+        setIsActive(false) // Stop audio thread generation
 
         val uri = currentPlaylist[position]
-
         try {
-            Log.d("MidiPlayer", "Loading MIDI: ${getDisplayName(uri)}")
+            val inputStream = contentResolver.openInputStream(uri)
+            val midiBytes = inputStream?.use { it.readBytes() }
 
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: throw IOException("Cannot read file")
-            if (bytes.isEmpty()) throw IOException("Empty MIDI file")
+            setIsActive(false)
 
-            val success = loadMidiData(bytes)
-            Log.e("MidiPlayer", "loadMidiData returned: $success")
-            if (!success) {
-                Log.e("MidiPlayer", "MIDI load failed - aborting play")
-                statusText.text = "Load failed"
-                return
+            stopAdl();
+
+            Thread.sleep(50) // give parser time to die
+
+            if (isAdlInitialized) {
+                releaseAdl()                     // calls adl_close()
+                isAdlInitialized = initAdlMidi(48000)  // re-init fresh player
+                if (!isAdlInitialized) {
+                    statusText.text = "Re-init failed!"
+                    return
+                }
             }
-            startService(Intent(this, AudioPlaybackService::class.java))
-            currentPosition = position
-            playlistAdapter.notifyDataSetChanged()
-            statusText.text = "Playing: ${getDisplayName(uri)}"
 
-            // CRUCIAL: make sure synth is active and volume up
-            setIsActive(true)
-            val currentVol = volumeSlider.progress / 100f
-            setAdlVolume(currentVol)
-            audioService?.setVolume(currentVol)
+            if (midiBytes != null && midiBytes.isNotEmpty()) {
+                Log.d("MidiPlayer", "File size: ${midiBytes.size} bytes")
 
-            playAdl()
-
-            startAudioPlaybackIfNeeded()
-
+                if (loadMidiData(midiBytes)) {
+                    currentPosition = position
+                    playAdl()       // Start sequencer
+                    setIsActive(true) // Resume audio thread
+                    startAudioPlaybackIfNeeded()
+                } else {
+                    Log.e("MidiPlayer", "JNI loadMidiData returned false")
+                }
+            }
         } catch (e: Exception) {
-            Log.e("MidiPlayer", "Play failed", e)
-            statusText.text = "Error: ${e.message}"
-            currentPosition = -1
-            playlistAdapter.notifyDataSetChanged()
+            Log.e("MidiPlayer", "Failed to load MIDI", e)
         }
-
     }
 
 
@@ -598,12 +584,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopPlayback() {
         stopPositionPolling()
-        audioService?.stopPlayback()
+
+        audioService?.let { service ->
+            service.stopPlayback()           // sets interrupt + stops AudioTrack
+            // Give thread time to exit cleanly
+            Thread.sleep(80)                 // ← crude but effective for now
+        }
+
         if (isBound) {
             unbindService(connection)
             isBound = false
         }
         stopService(Intent(this, AudioPlaybackService::class.java))
+
+        // Now it's reasonably safe to destroy the synth
+        releaseAdl()
     }
 
     private fun startPositionPolling() {

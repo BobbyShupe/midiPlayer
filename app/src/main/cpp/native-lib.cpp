@@ -7,7 +7,7 @@
 #include <cstring>
 #include <atomic>
 #include <unistd.h>  // for usleep
-
+#include <algorithm> // Required for std::min
 #include "adlmidi.h"
 
 #define LOG_TAG "OPL_MIDI_JNI"
@@ -73,107 +73,102 @@ Java_com_example_midiPlayer_MainActivity_setIsActive(
 // Load MIDI file from byte array
 // ────────────────────────────────────────────────
 JNIEXPORT jboolean JNICALL
-Java_com_example_midiPlayer_MainActivity_loadMidiData(
-        JNIEnv* env,
-        jobject /* thiz */,
-        jbyteArray midiData)
-{
+Java_com_example_midiPlayer_MainActivity_loadMidiData(JNIEnv* env, jobject, jbyteArray data) {
     if (!g_player) {
-        LOGE("loadMidiData: g_player is NULL!");
+        LOGE("loadMidiData: player is null");
         return JNI_FALSE;
     }
 
-    jsize len = env->GetArrayLength(midiData);
-    if (len <= 0) {
-        LOGE("loadMidiData: empty array");
+    jsize len = env->GetArrayLength(data);
+    LOGD("loadMidiData: received %d bytes", len);
+
+    if (len < 14) {  // smallest valid MIDI is ~14 bytes
+        LOGE("File too small: %d bytes", len);
         return JNI_FALSE;
     }
 
-    jbyte* bytes = env->GetByteArrayElements(midiData, nullptr);
+    jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     if (!bytes) {
-        LOGE("loadMidiData: failed to get array elements");
+        LOGE("GetByteArrayElements failed");
         return JNI_FALSE;
     }
 
-    LOGD("Calling adl_openData with %zd bytes", static_cast<size_t>(len));
+    // Improved header check + log first 16 bytes
+    char header[5] = {0};
+    memcpy(header, bytes, 4);
+    LOGD("File header: %.4s", header);
 
-    int res = adl_openData(g_player, reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len));
-
-    env->ReleaseByteArrayElements(midiData, bytes, JNI_ABORT);
-
-    if (res != 0) {
-        LOGE("adl_openData failed: %s", adl_errorInfo(g_player));
+    if (strncmp(header, "MThd", 4) != 0) {
+        // Also log next few bytes in hex
+        char hex[100] = "";
+        for (int i = 0; i < std::min(16, (int)len); i++) {
+            char tmp[8];
+            snprintf(tmp, sizeof(tmp), "%02x ", (unsigned char)bytes[i]);
+            strncat(hex, tmp, sizeof(hex)-strlen(hex)-1);
+        }
+        LOGE("Not a MIDI file! Header: %.4s  First bytes: %s", header, hex);
+        env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
         return JNI_FALSE;
     }
 
-    g_isActive = false;  // reset playing state
-    g_isGenerating = false;
-    LOGD("MIDI loaded successfully (%zd bytes)", static_cast<size_t>(len));
+    int result = adl_openData(g_player, (uint8_t*)bytes, len);
+    if (result != 0) {
+        LOGE("adl_openData failed with code %d", result);
+        // If your libADLMIDI is recent enough (check header or git):
+        // const char* err = adl_errorInfo(g_player);
+        // if (err) LOGE("libADLMIDI error message: %s", err);
+    }
+    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+
+    if (result != 0) {
+        LOGE("adl_openData failed → error code = %d", result);
+        // You can also call adl_errorInfo(g_player) if your version supports it
+        return JNI_FALSE;
+    }
+
+    LOGD("adl_openData success");
     return JNI_TRUE;
 }
 
 // ────────────────────────────────────────────────
 // Generate the next block of stereo PCM samples
 // ────────────────────────────────────────────────
+// Update your generateSamples in native-lib.cpp
 JNIEXPORT jint JNICALL
-Java_com_example_midiPlayer_MainActivity_generateSamples(
-        JNIEnv* env,
-        jobject /* thiz */,
-        jshortArray buffer,
-        jint framesRequested   // frames
-) {
-    if (!g_player || !g_isActive) {
-        LOGD("generateSamples skipped: no player or inactive");
+Java_com_example_midiPlayer_MainActivity_generateSamples(JNIEnv* env, jobject, jshortArray buffer, jint frames) {
+    // 1. If not active or player is null, bail immediately
+    if (!g_isActive || !g_player) return 0;
+
+    // 2. Atomic Lock: If we can't get the lock, another thread is
+    // likely re-initializing the synth. Return silence (0).
+    bool expected = false;
+    if (!g_isGenerating.compare_exchange_strong(expected, true)) {
         return 0;
     }
 
-    bool wasGenerating = g_isGenerating.exchange(true);
-    if (wasGenerating) {
-        LOGW("generateSamples: concurrent call - skipping");
-        return 0;
-    }
-
-    const int channels = 2;
-    const int samplesRequested = framesRequested * channels;
-
-    jsize arrayLen = env->GetArrayLength(buffer);
-    if (arrayLen < samplesRequested) {
-        LOGE("Buffer too small! Required %d shorts, got %d",
-             samplesRequested, arrayLen);
-        g_isGenerating = false;
+    // 3. Double-check g_player AFTER acquiring the lock
+    if (!g_player) {
+        g_isGenerating.store(false);
         return 0;
     }
 
     jshort* out = env->GetShortArrayElements(buffer, nullptr);
-    if (!out) {
-        g_isGenerating = false;
-        LOGE("Failed to get buffer");
-        return 0;
-    }
 
-    int samplesGenerated = adl_play(g_player, samplesRequested, out);
+    // Perform synthesis
+    int samplesGenerated = adl_play(g_player, frames * 2, out);
 
-    if (samplesGenerated > 0) {
-        float vol = g_volume.load(std::memory_order_relaxed);
-
-        for (int i = 0; i < samplesGenerated; ++i) {
-            int v = static_cast<int>(out[i] * vol);
-            if (v > 32767) v = 32767;
-            if (v < -32768) v = -32768;
-            out[i] = static_cast<short>(v);
-        }
+    // Apply native volume gain
+    float vol = g_volume.load();
+    for (int i = 0; i < samplesGenerated; i++) {
+        out[i] = static_cast<short>(out[i] * vol);
     }
 
     env->ReleaseShortArrayElements(buffer, out, 0);
-    g_isGenerating = false;
 
-    int framesGenerated = samplesGenerated / channels;
-
-
-    return framesGenerated;
+    // 4. Release the lock
+    g_isGenerating.store(false);
+    return samplesGenerated / 2;
 }
-
-
 
 // ────────────────────────────────────────────────
 // Playback control
@@ -214,17 +209,11 @@ Java_com_example_midiPlayer_MainActivity_stopAdl(JNIEnv*, jobject) {
         LOGW("stopAdl: g_player is NULL");
     }
 }
-// ────────────────────────────────────────────────
-// Volume control
-// ────────────────────────────────────────────────
+
 JNIEXPORT void JNICALL
-Java_com_example_midiPlayer_MainActivity_setAdlVolume(
-        JNIEnv*, jobject, jfloat vol
-) {
-    if (vol < 0.0f) vol = 0.0f;
-    if (vol > 4.0f) vol = 4.0f; // allow a bit of boost if you like
-    g_volume.store(vol, std::memory_order_relaxed);
-    LOGD("Volume set to %.2f", vol);
+Java_com_example_midiPlayer_MainActivity_setAdlVolume(JNIEnv*, jobject, jfloat vol) {
+    // Store in atomic float so the audio thread picks it up immediately
+    g_volume.store(vol);
 }
 
 
@@ -256,10 +245,18 @@ Java_com_example_midiPlayer_MainActivity_getAdlDurationMs(JNIEnv*, jobject) {
 JNIEXPORT void JNICALL
 Java_com_example_midiPlayer_MainActivity_releaseAdl(JNIEnv*, jobject) {
     if (g_player) {
-        // Wait for any ongoing generation
-        while (g_isGenerating.load()) {
-            usleep(1000);
+        // Wait much longer — audio thread might be blocked in AudioTrack.write()
+        int waitMs = 0;
+        const int MAX_WAIT_MS = 400;
+        while (g_isGenerating.load(std::memory_order_acquire) && waitMs < MAX_WAIT_MS) {
+            usleep(2000); // 2 ms
+            waitMs += 2;
         }
+
+        if (g_isGenerating.load()) {
+            LOGW("releaseAdl: gave up waiting after %d ms - possible audio thread hang", waitMs);
+        }
+
         adl_close(g_player);
         g_player = nullptr;
         g_isActive = false;
