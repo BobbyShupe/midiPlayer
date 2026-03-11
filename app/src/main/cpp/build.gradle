@@ -1,0 +1,97 @@
+apply plugin: 'com.android.application'
+
+def release_store_password = System.env.RELEASE_STORE_PASSWORD
+def release_key_password = System.env.RELEASE_KEY_PASSWORD
+def release_key_alias = System.env.RELEASE_KEY_ALIAS
+def pin_alias = System.env.PIN_ALIAS
+def db_pass_alias = System.env.DB_PASS_ALIAS
+
+android {
+    compileSdkVersion 36
+
+    // Note: The NDK 23 is SIGNIFICANTLY important, because of the support for non-NEON and older Android versions
+    //       The NDK 24 removes the support for Android 4.1, 4.2, and 4.3.
+    //       See details: https://github.com/android/ndk/wiki/Changelog-r24
+    ndkVersion "23.2.8568313"
+
+    defaultConfig {
+        applicationId "ru.wohlsoft.adlmidiplayer"
+        minSdkVersion 16
+        targetSdkVersion 36
+        versionCode 1060200
+        versionName '1.6.2'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        externalNativeBuild {
+            cmake {
+                cppFlags ""
+            }
+        }
+        ndk{
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+//            debugSymbolLevel 'SYMBOL_TABLE'
+        }
+    }
+
+    signingConfigs {
+        releaseci {
+            storeFile file("../release-key.jks")
+            storePassword = release_store_password
+            keyAlias = release_key_alias
+            keyPassword = release_key_password
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            debuggable false
+            jniDebuggable false
+            renderscriptDebuggable false
+            ndk {
+                debugSymbolLevel = 'SYMBOL_TABLE'
+            }
+        }
+        releaseci {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            buildConfigField "String", "PIN_ALIAS", "\"$pin_alias\""
+            buildConfigField "String", "DB_PASS_ALIAS", "\"$db_pass_alias\""
+            signingConfig signingConfigs.releaseci
+        }
+        debug {
+            debuggable true
+            jniDebuggable true
+            renderscriptDebuggable false
+            minifyEnabled false
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-DEVDEBUG'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+        }
+    }
+    productFlavors {
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    namespace 'ru.wohlsoft.adlmidiplayer'
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
+    androidTestImplementation('androidx.test.espresso:espresso-core:3.1.0', {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    })
+    //noinspection GradleDependency: Last version that supports MinSDK 14
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    compileOnly 'junit:junit:4.13.2'
+    //noinspection GradleDependency: the version 2.1.4 is last that support minSDK 16, newer version will require MinSDK 21
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+}

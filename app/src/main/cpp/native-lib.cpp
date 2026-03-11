@@ -244,25 +244,23 @@ Java_com_example_midiPlayer_MainActivity_getAdlDurationMs(JNIEnv*, jobject) {
 // ────────────────────────────────────────────────
 JNIEXPORT void JNICALL
 Java_com_example_midiPlayer_MainActivity_releaseAdl(JNIEnv*, jobject) {
+    g_isActive = false; // Signal stop
+
+    // ATOMIC LOCK: Prevent generation from starting
+    bool expected = false;
+    while (!g_isGenerating.compare_exchange_strong(expected, true)) {
+        expected = false;
+        usleep(1000); // Wait for current generation block to finish
+    }
+
     if (g_player) {
-        // Wait much longer — audio thread might be blocked in AudioTrack.write()
-        int waitMs = 0;
-        const int MAX_WAIT_MS = 400;
-        while (g_isGenerating.load(std::memory_order_acquire) && waitMs < MAX_WAIT_MS) {
-            usleep(2000); // 2 ms
-            waitMs += 2;
-        }
-
-        if (g_isGenerating.load()) {
-            LOGW("releaseAdl: gave up waiting after %d ms - possible audio thread hang", waitMs);
-        }
-
         adl_close(g_player);
         g_player = nullptr;
-        g_isActive = false;
-        g_isGenerating = false;
-        LOGD("libADLMIDI closed");
     }
+
+    // Keep g_isGenerating true if you want to prevent ANY use
+    // until initAdlMidi is called, or reset it:
+    g_isGenerating.store(false);
 }
 
 // Optional setters
