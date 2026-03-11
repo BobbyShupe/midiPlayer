@@ -1,5 +1,7 @@
 package com.example.midiPlayer
 
+import android.widget.ImageButton
+import android.graphics.Typeface
 import android.app.Service
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -443,6 +445,34 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
+        playlistAdapter = PlaylistAdapter(
+            onClick = { pos -> playAt(pos) },
+            onMoveUp = { pos ->
+                if (pos > 0) {
+                    val item = currentPlaylist.removeAt(pos)
+                    currentPlaylist.add(pos - 1, item)
+                    if (currentPosition == pos) currentPosition--
+                    else if (currentPosition == pos - 1) currentPosition++
+                    playlistAdapter.notifyItemMoved(pos, pos - 1)
+                    savePlaylists()
+                }
+            },
+            onMoveDown = { pos ->
+                if (pos < currentPlaylist.size - 1) {
+                    val item = currentPlaylist.removeAt(pos)
+                    currentPlaylist.add(pos + 1, item)
+                    if (currentPosition == pos) currentPosition++
+                    else if (currentPosition == pos + 1) currentPosition--
+                    playlistAdapter.notifyItemMoved(pos, pos + 1)
+                    savePlaylists()
+                }
+            },
+            onDelete = { pos ->
+                showRemoveTrackDialog(pos)   // reuse your existing dialog
+            }
+        )
+        rvPlaylist.adapter = playlistAdapter
+
         // Spinner setup
         val spinnerAdapter = ArrayAdapter<String>(
             this,
@@ -471,7 +501,30 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        playlistAdapter = PlaylistAdapter { pos -> playAt(pos) }
+        playlistAdapter = PlaylistAdapter(
+            onClick    = { pos -> playAt(pos) },
+            onMoveUp   = { pos ->
+                if (pos > 0) {
+                    val item = currentPlaylist.removeAt(pos)
+                    currentPlaylist.add(pos - 1, item)
+                    if (currentPosition == pos) currentPosition = pos - 1
+                    else if (currentPosition == pos - 1) currentPosition = pos
+                    playlistAdapter.notifyDataSetChanged()
+                    savePlaylists()
+                }
+            },
+            onMoveDown = { pos ->
+                if (pos < currentPlaylist.size - 1) {
+                    val item = currentPlaylist.removeAt(pos)
+                    currentPlaylist.add(pos + 1, item)
+                    if (currentPosition == pos) currentPosition = pos + 1
+                    else if (currentPosition == pos + 1) currentPosition = pos
+                    playlistAdapter.notifyDataSetChanged()
+                    savePlaylists()
+                }
+            },
+            onDelete   = { pos -> showRemoveTrackDialog(pos) }
+        )
         rvPlaylist.adapter = playlistAdapter
 
         // Init libADLMIDI
@@ -528,6 +581,11 @@ class MainActivity : AppCompatActivity() {
                     playAdl()       // Start sequencer
                     setIsActive(true) // Resume audio thread
                     startAudioPlaybackIfNeeded()
+
+                    startPositionPolling()
+
+                    // Force UI refresh so the new "currentPosition" is highlighted
+                    handler.post { playlistAdapter.notifyDataSetChanged() }
                 } else {
                     Log.e("MidiPlayer", "JNI loadMidiData returned false")
                 }
@@ -577,6 +635,12 @@ class MainActivity : AppCompatActivity() {
         startPositionPolling()
     }
 
+    private fun formatTime(ms: Int): String {
+        val sec = (ms / 1000) % 60
+        val min = (ms / 1000) / 60
+        return "%d:%02d".format(min, sec)
+    }
+
     private fun pauseAudioPlayback() {
         audioService?.pausePlayback()
         stopPositionPolling()
@@ -614,12 +678,31 @@ class MainActivity : AppCompatActivity() {
                 val posMs = getAdlPositionMs()
                 val durMs = getAdlDurationMs()
 
+                // Update UI on main thread
+                handler.post {
+                    playlistAdapter.notifyItemChanged(currentPosition) // refresh row
+
+                    // Optional: update statusText too
+                    if (currentPosition >= 0 && currentPlaylist.isNotEmpty()) {
+                        val posStr = formatTime(posMs)
+                        val durStr = formatTime(durMs)
+                        statusText.text = "${getDisplayName(currentPlaylist[currentPosition])}  $posStr / $durStr"
+                    }
+
+                    // Also update per-row position if you want
+                    rvPlaylist.findViewHolderForAdapterPosition(currentPosition)?.let { vh ->
+                        if (vh is PlaylistAdapter.ViewHolder) {
+                            vh.tvPosition.text = "${formatTime(posMs)} / ${formatTime(durMs)}"
+                        }
+                    }
+                }
+
                 if (durMs > 1000 && posMs >= durMs - 800) {
                     handler.post { handleTrackCompletion() }
                     return
                 }
 
-                handler.postDelayed(this, 600)
+                handler.postDelayed(this, 800)   // ~1 fps update is enough
             }
         }
 
@@ -634,12 +717,18 @@ class MainActivity : AppCompatActivity() {
     private fun handleTrackCompletion() {
         val next = currentPosition + 1
         if (next < currentPlaylist.size) {
-            playAt(next)
+            // Run on UI thread to ensure the adapter sees the change
+            handler.post {
+                playAt(next)
+                playlistAdapter.notifyDataSetChanged()
+            }
         } else {
-            stopPlayback()
-            statusText.text = "Finished playlist"
-            currentPosition = -1
-            playlistAdapter.notifyDataSetChanged()
+            handler.post {
+                stopPlayback()
+                statusText.text = "Finished playlist"
+                currentPosition = -1
+                playlistAdapter.notifyDataSetChanged()
+            }
         }
     }
 
@@ -751,12 +840,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class PlaylistAdapter(
-        private val onClick: (Int) -> Unit
+        private val onClick: (Int) -> Unit,
+        private val onMoveUp: (Int) -> Unit,
+        private val onMoveDown: (Int) -> Unit,
+        private val onDelete: (Int) -> Unit
     ) : RecyclerView.Adapter<PlaylistAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-            val tvName: MaterialTextView = view.findViewById(R.id.tv_file_name)
-            val tvStatus: MaterialTextView = view.findViewById(R.id.tv_status)
+            val tvName: MaterialTextView     = view.findViewById(R.id.tv_file_name)
+            val tvStatus: MaterialTextView   = view.findViewById(R.id.tv_status)
+            val tvPosition: MaterialTextView = view.findViewById(R.id.tv_position)
+            val btnUp: ImageButton           = view.findViewById(R.id.btn_move_up)
+            val btnDown: ImageButton         = view.findViewById(R.id.btn_move_down)
+            val btnDelete: ImageButton       = view.findViewById(R.id.btn_delete)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -768,21 +864,45 @@ class MainActivity : AppCompatActivity() {
             val uri = currentPlaylist[position]
             holder.tvName.text = getDisplayName(uri)
 
-            if (position == currentPosition) {
-                holder.tvStatus.text = if (isAdlPlaying()) "Playing" else "Paused"
+            val isPlaying = position == currentPosition
+
+            if (isPlaying) {
                 holder.tvStatus.visibility = View.VISIBLE
-                holder.itemView.setBackgroundColor(0x220000FF)
+                holder.tvPosition.visibility = View.VISIBLE
+                holder.tvStatus.text = if (isAdlPlaying()) "Playing" else "Paused"
+
+                // Stronger visual feedback
+                holder.itemView.setBackgroundColor(0xFF1E3A5F.toInt())   // dark blue-ish
+                holder.tvName.setTextColor(0xFFBBDDFF.toInt())
+                holder.tvName.setTypeface(null, android.graphics.Typeface.BOLD)
             } else {
                 holder.tvStatus.visibility = View.GONE
+                holder.tvPosition.visibility = View.GONE
                 holder.itemView.setBackgroundColor(0)
+                holder.tvName.setTextColor(0xFFFFFFFF.toInt())
+                holder.tvName.setTypeface(null, android.graphics.Typeface.NORMAL)
             }
 
+            // Position display (will be updated by polling)
+            holder.tvPosition.text = "—:—— / —:——"
+
+            // Click to play
             holder.itemView.setOnClickListener { onClick(position) }
 
-            holder.itemView.setOnLongClickListener {
-                showRemoveTrackDialog(position)
-                true
-            }
+            // Action buttons (visible always or only on playing — your choice)
+            holder.btnUp.setOnClickListener { onMoveUp(position) }
+            holder.btnDown.setOnClickListener { onMoveDown(position) }
+            holder.btnDelete.setOnClickListener { onDelete(position) }
+
+            // Optional: disable up/down at edges
+            holder.btnUp.isEnabled = position > 0
+            holder.btnDown.isEnabled = position < currentPlaylist.size - 1
+
+            // Inside onBindViewHolder
+            val whiteTint = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            holder.btnUp.imageTintList = whiteTint
+            holder.btnDown.imageTintList = whiteTint
+            holder.btnDelete.imageTintList = whiteTint
         }
 
         override fun getItemCount() = currentPlaylist.size
