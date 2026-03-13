@@ -35,6 +35,7 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatCheckBox
 import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams as CLParams
@@ -77,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         AudioFormat.ENCODING_PCM_16BIT
     ) * 4
 
+    private lateinit var cbRepeat: AppCompatCheckBox   // or MaterialCheckBox
     private val handler = Handler(Looper.getMainLooper())
     private var positionCheckRunnable: Runnable? = null
 
@@ -155,6 +157,7 @@ class MainActivity : AppCompatActivity() {
                 topMargin = 32
             }
         }
+        root.addView(statusText)
 
         spinnerPlaylists = Spinner(this).apply {
             id = View.generateViewId()
@@ -165,7 +168,11 @@ class MainActivity : AppCompatActivity() {
                 topMargin = 24
             }
         }
+        root.addView(spinnerPlaylists)
 
+        // ────────────────────────────────────────────────
+        // Create btnContainer EARLY so volumeSlider & cbRepeat can reference it
+        // ────────────────────────────────────────────────
         val btnContainer = ConstraintLayout(this).apply {
             id = View.generateViewId()
             layoutParams = CLParams(CLParams.MATCH_PARENT, CLParams.WRAP_CONTENT).apply {
@@ -176,7 +183,11 @@ class MainActivity : AppCompatActivity() {
             }
             setPadding(0, 16, 0, 16)
         }
+        root.addView(btnContainer)
 
+        // ────────────────────────────────────────────────
+        // Volume slider – now safe to reference btnContainer
+        // ────────────────────────────────────────────────
         volumeSlider = VerticalSeekBar(this).apply {
             id = View.generateViewId()
             max = 100
@@ -197,7 +208,7 @@ class MainActivity : AppCompatActivity() {
 
         volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val vol = progress / 12.5f   //
+                val vol = progress / 12.5f
                 setAdlVolume(vol)
                 Log.d("MidiPlayer", "Slider volume set to $vol (native gain applied)")
             }
@@ -205,24 +216,70 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
+        root.addView(volumeSlider)
 
+        // ────────────────────────────────────────────────
+        // Checkbox – created before rvPlaylist so its ID is available
+        // ────────────────────────────────────────────────
+        cbRepeat = AppCompatCheckBox(this).apply {
+            id = View.generateViewId()
+            text = "Repeat playlist"
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            buttonTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+
+            // temporary position – will be updated after rvPlaylist is created
+            layoutParams = ConstraintLayout.LayoutParams(
+                ConstraintLayout.LayoutParams.WRAP_CONTENT,
+                ConstraintLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topToBottom = spinnerPlaylists.id   // temporary
+                startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+                bottomToTop = btnContainer.id
+                marginStart = 32
+                topMargin = 160                     // temporary large value
+                bottomMargin = 20
+            }
+        }
+        root.addView(cbRepeat)
+
+        // ────────────────────────────────────────────────
+        // RecyclerView – now safe to reference cbRepeat.id
+        // ────────────────────────────────────────────────
         rvPlaylist = RecyclerView(this).apply {
             id = View.generateViewId()
             layoutManager = LinearLayoutManager(this@MainActivity)
+            setPadding(0, 0, 0, 0)
+            clipToPadding = false
+
             layoutParams = CLParams(0, 0).apply {
-                width = CLParams.MATCH_CONSTRAINT
-                height = CLParams.MATCH_CONSTRAINT
                 topToBottom = spinnerPlaylists.id
-                bottomToTop = btnContainer.id
+                bottomToTop = cbRepeat.id
                 startToStart = CLParams.PARENT_ID
                 endToStart = volumeSlider.id
                 topMargin = 16
-                bottomMargin = 16
+                bottomMargin = 8                    // small breathing room before checkbox
                 marginEnd = 16
             }
         }
+        root.addView(rvPlaylist)
 
-        // Buttons (same as before)
+        // ────────────────────────────────────────────────
+        // Now update checkbox to be properly below the list
+        // ────────────────────────────────────────────────
+        (cbRepeat.layoutParams as ConstraintLayout.LayoutParams).apply {
+            topToBottom = rvPlaylist.id
+            bottomToTop = btnContainer.id
+            startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+            topMargin = 16
+            bottomMargin = 20
+            marginStart = 32
+        }
+        cbRepeat.requestLayout()
+
+        // ────────────────────────────────────────────────
+        // Buttons (your original code unchanged)
+        // ────────────────────────────────────────────────
         val btnAddFiles = MaterialButton(this).apply {
             id = View.generateViewId()
             text = "Add Files"
@@ -437,12 +494,6 @@ class MainActivity : AppCompatActivity() {
         btnContainer.addView(btnStop)
         btnContainer.addView(btnNext)
 
-        root.addView(statusText)
-        root.addView(spinnerPlaylists)
-        root.addView(volumeSlider)
-        root.addView(rvPlaylist)
-        root.addView(btnContainer)
-
         setContentView(root)
 
         playlistAdapter = PlaylistAdapter(
@@ -453,7 +504,7 @@ class MainActivity : AppCompatActivity() {
                     currentPlaylist.add(pos - 1, item)
                     if (currentPosition == pos) currentPosition--
                     else if (currentPosition == pos - 1) currentPosition++
-                    playlistAdapter.notifyItemMoved(pos, pos - 1)
+                    playlistAdapter.notifyDataSetChanged()
                     savePlaylists()
                 }
             },
@@ -463,17 +514,14 @@ class MainActivity : AppCompatActivity() {
                     currentPlaylist.add(pos + 1, item)
                     if (currentPosition == pos) currentPosition++
                     else if (currentPosition == pos + 1) currentPosition--
-                    playlistAdapter.notifyItemMoved(pos, pos + 1)
+                    playlistAdapter.notifyDataSetChanged()
                     savePlaylists()
                 }
             },
-            onDelete = { pos ->
-                showRemoveTrackDialog(pos)   // reuse your existing dialog
-            }
+            onDelete = { pos -> showRemoveTrackDialog(pos) }
         )
         rvPlaylist.adapter = playlistAdapter
 
-        // Spinner setup
         val spinnerAdapter = ArrayAdapter<String>(
             this,
             android.R.layout.simple_spinner_item,
@@ -501,33 +549,6 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        playlistAdapter = PlaylistAdapter(
-            onClick    = { pos -> playAt(pos) },
-            onMoveUp   = { pos ->
-                if (pos > 0) {
-                    val item = currentPlaylist.removeAt(pos)
-                    currentPlaylist.add(pos - 1, item)
-                    if (currentPosition == pos) currentPosition = pos - 1
-                    else if (currentPosition == pos - 1) currentPosition = pos
-                    playlistAdapter.notifyDataSetChanged()
-                    savePlaylists()
-                }
-            },
-            onMoveDown = { pos ->
-                if (pos < currentPlaylist.size - 1) {
-                    val item = currentPlaylist.removeAt(pos)
-                    currentPlaylist.add(pos + 1, item)
-                    if (currentPosition == pos) currentPosition = pos + 1
-                    else if (currentPosition == pos + 1) currentPosition = pos
-                    playlistAdapter.notifyDataSetChanged()
-                    savePlaylists()
-                }
-            },
-            onDelete   = { pos -> showRemoveTrackDialog(pos) }
-        )
-        rvPlaylist.adapter = playlistAdapter
-
-        // Init libADLMIDI
         isAdlInitialized = initAdlMidi(48000)
         if (!isAdlInitialized) {
             statusText.text = "Failed to initialize libADLMIDI"
@@ -716,13 +737,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleTrackCompletion() {
         val next = currentPosition + 1
+
         if (next < currentPlaylist.size) {
-            // Run on UI thread to ensure the adapter sees the change
+            // Normal next track
             handler.post {
                 playAt(next)
                 playlistAdapter.notifyDataSetChanged()
             }
+        } else if (cbRepeat.isChecked) {
+            // Repeat playlist → go back to first track
+            handler.post {
+                playAt(0)
+                playlistAdapter.notifyDataSetChanged()
+                statusText.text = "Playlist repeating"
+            }
         } else {
+            // End of playlist, no repeat
             handler.post {
                 stopPlayback()
                 statusText.text = "Finished playlist"
@@ -785,52 +815,86 @@ class MainActivity : AppCompatActivity() {
 
     private fun savePlaylists() {
         val prefs = getSharedPreferences("midi_player", MODE_PRIVATE)
+
+        val playlistsData = playlists.mapValues { (_, uris) ->
+            uris.map { it.toString() }
+        }
+
         val data = mapOf(
-            "playlists" to playlists.mapValues { (_, uris) -> uris.map { it.toString() } },
-            "current" to currentPlaylistName,
-            "volume" to volumeSlider.progress // This saves the current slider position
+            "playlists"     to playlistsData,
+            "current"       to currentPlaylistName,
+            "volume"        to volumeSlider.progress,
+            "repeat"        to cbRepeat.isChecked   // the new repeat setting
         )
-        prefs.edit().putString("data", Gson().toJson(data)).apply()
+
+        val json = Gson().toJson(data)
+        prefs.edit().putString("data", json).apply()
     }
 
     private fun loadPlaylists() {
         val prefs = getSharedPreferences("midi_player", MODE_PRIVATE)
         val json = prefs.getString("data", null) ?: return
+
         val type = object : TypeToken<Map<String, Any>>() {}.type
         val data: Map<String, Any> = Gson().fromJson(json, type) ?: return
 
+        // Load playlists
         @Suppress("UNCHECKED_CAST")
-        val saved = data["playlists"] as? Map<String, List<String>> ?: return
-        saved.forEach { (name, uriStrings) ->
+        val savedPlaylists = data["playlists"] as? Map<String, List<String>> ?: emptyMap()
+
+        playlists.clear()
+        savedPlaylists.forEach { (name, uriStrings) ->
             val validUris = mutableListOf<Uri>()
             uriStrings.forEach { uriString ->
                 val uri = Uri.parse(uriString)
                 try {
+                    // Quick permission/validity check
                     contentResolver.openFileDescriptor(uri, "r")?.close()
                     validUris.add(uri)
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                    // Skip invalid or no-longer-permitted URIs
+                }
             }
-            playlists[name] = validUris
+            if (validUris.isNotEmpty()) {
+                playlists[name] = validUris
+            }
         }
+
+        // Load current playlist name
         currentPlaylistName = (data["current"] as? String) ?: "Default"
         if (!playlists.containsKey(currentPlaylistName)) {
             currentPlaylistName = playlists.keys.firstOrNull() ?: "Default"
         }
 
-        // --- FIX FOR VOLUME PERSISTENCE ---
-        // 1. Extract volume (Gson numbers are usually Double)
-        val savedVol = (data["volume"] as? Double)?.toInt() ?: 80
+        // Load volume
+        val savedVol = when (val volValue = data["volume"]) {
+            is Double  -> volValue.toInt()
+            is Long    -> volValue.toInt()
+            is Int     -> volValue
+            else       -> 80
+        }.coerceIn(0, 100)
 
-        // 2. Update the UI slider
         volumeSlider.progress = savedVol
-
-        // 3. Define volFloat and apply to native synth
         val volFloat = savedVol / 100f
         setAdlVolume(volFloat)
 
-        // 4. Apply to service if it's already bound
-        // (Note: Ensure you have the audioService variable and connection logic implemented)
-        // audioService?.setVolume(volFloat)
+        // Apply to service too (if already connected)
+        audioService?.setVolume(volFloat)
+
+        // Load repeat setting (new)
+        val repeatEnabled = (data["repeat"] as? Boolean) ?: false
+        cbRepeat.isChecked = repeatEnabled
+
+        // Refresh UI
+        updateSpinner()
+        playlistAdapter.notifyDataSetChanged()
+
+        // Optional: show current status
+        if (currentPlaylist.isNotEmpty() && currentPosition >= 0) {
+            statusText.text = getDisplayName(currentPlaylist[currentPosition])
+        } else {
+            statusText.text = "No files in playlist"
+        }
     }
 
     override fun onDestroy() {
