@@ -243,6 +243,11 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(cbRepeat)
 
+        cbRepeat.setOnCheckedChangeListener { _, isChecked ->
+            savePlaylists()
+            Log.d("RepeatCheckbox", "Repeat state changed to $isChecked → saved")
+        }
+
         // ────────────────────────────────────────────────
         // RecyclerView – now safe to reference cbRepeat.id
         // ────────────────────────────────────────────────
