@@ -50,6 +50,7 @@ import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
+    private var isRestoringState = false
     private var audioService: AudioPlaybackService? = null
     private val playlists = mutableMapOf<String, MutableList<Uri>>()
     private var currentPlaylistName: String = "Default"
@@ -100,6 +101,11 @@ class MainActivity : AppCompatActivity() {
         init {
             System.loadLibrary("midiplayer")
         }
+        private const val PREFS_NAME = "midi_player"
+        private const val KEY_CURRENT_PLAYLIST = "currentPlaylistName"
+        private const val KEY_CURRENT_POSITION = "currentPosition"
+        private const val KEY_PLAYBACK_POS_MS = "playbackPositionMs"
+        private const val KEY_WAS_PLAYING = "wasPlaying"
     }
 
     private val pickMultipleMidi = registerForActivityResult(
@@ -375,8 +381,16 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
             cornerRadius = 0
             setPadding(12, 2, 12, 2)
-            backgroundTintList = btnAddFiles.backgroundTintList
-            setTextColor(btnAddFiles.textColors)
+            backgroundTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()),
+                intArrayOf(0xFFFFFFFF.toInt(), 0xFF000000.toInt())
+            )
+            setTextColor(
+                ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()),
+                    intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt())
+                )
+            )
             strokeWidth = 3
             strokeColor = ColorStateList.valueOf(0xFFFFFFFF.toInt())
             minHeight = 0
@@ -391,13 +405,37 @@ class MainActivity : AppCompatActivity() {
                 marginStart = 4
                 bottomMargin = 2
             }
+
             setOnClickListener {
-                if (currentPosition >= 0) {
-                    playAdl()
-                    startAudioPlaybackIfNeeded()
+                if (!isAdlInitialized) {
+                    statusText.text = "Player initializing…"
+                    return@setOnClickListener
+                }
+
+                if (currentPosition >= 0 && currentPosition < currentPlaylist.size) {
+                    // We have a valid current track (from restore or previous play)
+                    if (isAdlPlaying()) {
+                        // Already playing → maybe user wants to restart from beginning?
+                        // For now we just make sure it's unpaused
+                        playAdl()
+                        setIsActive(true)
+                    } else {
+                        // Was paused or just loaded → start/resume
+                        playAdl()
+                        setIsActive(true)
+                        startAudioPlaybackIfNeeded()
+                        startPositionPolling()
+                    }
                     playlistAdapter.notifyDataSetChanged()
-                } else if (currentPlaylist.isNotEmpty()) {
+                    statusText.text = "Playing: ${getDisplayName(currentPlaylist[currentPosition])}"
+                }
+                else if (currentPlaylist.isNotEmpty()) {
+                    // No valid current position → safe fallback: start playlist from beginning
                     playAt(0)
+                    playlistAdapter.notifyDataSetChanged()
+                }
+                else {
+                    statusText.text = "No tracks in playlist"
                 }
             }
         }
@@ -538,16 +576,24 @@ class MainActivity : AppCompatActivity() {
 
         spinnerPlaylists.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
-                if (pos in playlists.keys.indices) {
-                    currentPlaylistName = playlists.keys.elementAt(pos)
-                    playlistAdapter.notifyDataSetChanged()
-                    stopPlayback()
-                    currentPosition = -1
-                    statusText.text = if (currentPlaylist.isEmpty()) {
-                        "Playlist \"$currentPlaylistName\" is empty"
-                    } else {
-                        "Switched to \"$currentPlaylistName\""
-                    }
+
+                if (isRestoringState) return
+
+                val selectedPlaylist = playlists.keys.elementAtOrNull(pos) ?: return
+
+                // Ignore if it's the same playlist (startup case)
+                if (selectedPlaylist == currentPlaylistName) return
+
+                currentPlaylistName = selectedPlaylist
+
+                playlistAdapter.notifyDataSetChanged()
+                stopPlayback()
+                currentPosition = -1
+
+                statusText.text = if (currentPlaylist.isEmpty()) {
+                    "Playlist \"$currentPlaylistName\" is empty"
+                } else {
+                    "Switched to \"$currentPlaylistName\""
                 }
             }
 
@@ -561,6 +607,7 @@ class MainActivity : AppCompatActivity() {
 
         loadPlaylists()
         updateSpinner()
+        restorePlaybackState()
     }
 
     private fun getDisplayName(uri: Uri): String {
@@ -609,6 +656,7 @@ class MainActivity : AppCompatActivity() {
                     startAudioPlaybackIfNeeded()
 
                     startPositionPolling()
+                    savePlaybackState()
 
                     // Force UI refresh so the new "currentPosition" is highlighted
                     handler.post { playlistAdapter.notifyDataSetChanged() }
@@ -670,6 +718,7 @@ class MainActivity : AppCompatActivity() {
     private fun pauseAudioPlayback() {
         audioService?.pausePlayback()
         stopPositionPolling()
+        savePlaybackState()
     }
 
     private fun stopPlayback() {
@@ -689,6 +738,7 @@ class MainActivity : AppCompatActivity() {
 
         // Now it's reasonably safe to destroy the synth
         releaseAdl()
+        savePlaybackState()
     }
 
     private fun startPositionPolling() {
@@ -816,6 +866,113 @@ class MainActivity : AppCompatActivity() {
         }
         val index = playlists.keys.indexOf(currentPlaylistName).coerceAtLeast(0)
         spinnerPlaylists.setSelection(index)
+    }
+
+    private fun savePlaybackState() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+
+        prefs.putString(KEY_CURRENT_PLAYLIST, currentPlaylistName)
+        prefs.putInt(KEY_CURRENT_POSITION, currentPosition)
+
+        // Only save position if something is loaded
+        if (currentPosition >= 0 && isAdlInitialized) {
+            val posMs = getAdlPositionMs()
+            prefs.putInt(KEY_PLAYBACK_POS_MS, posMs)
+            prefs.putBoolean(KEY_WAS_PLAYING, isAdlPlaying())
+        } else {
+            prefs.remove(KEY_PLAYBACK_POS_MS)
+            prefs.remove(KEY_WAS_PLAYING)
+        }
+
+        prefs.apply()
+        Log.d("PlaybackState", "Saved: playlist=$currentPlaylistName pos=$currentPosition time=${getAdlPositionMs()}ms playing=${isAdlPlaying()}")
+    }
+
+    private fun restorePlaybackState() {
+        isRestoringState = true
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+
+        val savedPlaylistName = prefs.getString(KEY_CURRENT_PLAYLIST, "Default") ?: "Default"
+        val savedPosition     = prefs.getInt(KEY_CURRENT_POSITION, -1)
+        val wasPlaying        = prefs.getBoolean(KEY_WAS_PLAYING, false)
+
+        // Early exit if nothing was saved or playlist doesn't exist anymore
+        if (!playlists.containsKey(savedPlaylistName) || savedPosition < 0) {
+            Log.d("Restore", "No valid saved state")
+            return
+        }
+
+        // Switch to the saved playlist
+        currentPlaylistName = savedPlaylistName
+        updateSpinner()  // Make sure spinner shows correct playlist immediately
+
+        if (savedPosition >= currentPlaylist.size) {
+            Log.w("Restore", "Saved position $savedPosition out of bounds for playlist size ${currentPlaylist.size}")
+            currentPosition = -1
+            return
+        }
+
+        currentPosition = savedPosition
+
+        // Load and (if was playing) start the song — do file I/O off main thread
+        thread(name = "Restore MIDI track") {
+            try {
+                val uri = currentPlaylist[currentPosition]
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: run {
+                        Log.e("Restore", "Cannot read file")
+                        return@thread
+                    }
+
+                if (bytes.isEmpty()) {
+                    Log.e("Restore", "Empty MIDI data")
+                    return@thread
+                }
+
+                // Re-init synth cleanly
+                releaseAdl()
+                isAdlInitialized = initAdlMidi(48000)
+                if (!isAdlInitialized) {
+                    throw IllegalStateException("ADL re-init failed")
+                }
+
+                if (!loadMidiData(bytes)) {
+                    throw IllegalStateException("loadMidiData failed")
+                }
+
+                // Always start from beginning (as requested)
+                // playAdl() only if it was actually playing when closed
+                if (wasPlaying) {
+                    playAdl()
+                    setIsActive(true)
+                    startAudioPlaybackIfNeeded()
+                    startPositionPolling()
+                }
+
+                // Update UI on main thread
+                runOnUiThread {
+                    playlistAdapter.notifyDataSetChanged()
+                    val trackName = getDisplayName(uri)
+                    statusText.text = if (wasPlaying) {
+                        "Resumed: $trackName"
+                    } else {
+                        "Loaded: $trackName (was paused)"
+                    }
+                    isRestoringState = false
+                    rvPlaylist.scrollToPosition(currentPosition)
+                }
+
+                Log.i("Restore", "Restored track #$savedPosition in '$savedPlaylistName' (wasPlaying=$wasPlaying)")
+
+            } catch (e: Exception) {
+                Log.e("Restore", "Failed to restore track", e)
+                runOnUiThread {
+                    statusText.text = "Failed to load previous track"
+                    currentPosition = -1
+                    playlistAdapter.notifyDataSetChanged()
+                }
+            }
+        }
     }
 
     private fun savePlaylists() {
